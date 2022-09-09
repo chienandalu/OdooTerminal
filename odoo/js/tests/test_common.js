@@ -72,7 +72,7 @@ odoo.define("terminal.tests.common", function (require) {
                     test_name === "test_context_no_arg"
                 ) {
                     return this.terminal
-                        .executeCommand("context", false, true)
+                        .execute("context", false, true)
                         .then((context) => {
                             this._orig_context = context;
                         });
@@ -82,11 +82,7 @@ odoo.define("terminal.tests.common", function (require) {
                     test_name === "test_uninstall" ||
                     test_name === "test_uninstall__no_arg"
                 ) {
-                    return this.terminal.executeCommand(
-                        "install -m sms",
-                        false,
-                        true
-                    );
+                    return this.terminal.execute("install -m sms", false, true);
                 }
             });
         },
@@ -98,7 +94,7 @@ odoo.define("terminal.tests.common", function (require) {
                     test_name === "test_context" ||
                     test_name === "test_context_no_arg"
                 ) {
-                    return this.terminal.executeCommand(
+                    return this.terminal.execute(
                         `context -o set -v '${JSON.stringify(
                             this._orig_context
                         )}'`,
@@ -109,7 +105,7 @@ odoo.define("terminal.tests.common", function (require) {
                     test_name === "test_upgrade" ||
                     test_name === "test_upgrade__no_arg"
                 ) {
-                    return this.terminal.executeCommand(
+                    return this.terminal.execute(
                         "uninstall -m sms --force",
                         false,
                         true
@@ -119,14 +115,10 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_create: async function () {
-            await this.terminal.executeCommand(
-                "create -m res.partner",
-                false,
-                true
-            );
+            await this.terminal.execute("create -m res.partner", false, true);
             await new Promise((resolve) => setTimeout(resolve, 800));
             this.assertTrue(this.isFormOpen());
-            const record_id = await this.terminal.executeCommand(
+            const record_id = await this.terminal.execute(
                 `create -m res.partner -v "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
@@ -136,14 +128,10 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(record_id > 0);
         },
         test_create__no_arg: async function () {
-            await this.terminal.executeCommand(
-                "create res.partner",
-                false,
-                true
-            );
+            await this.terminal.execute("create res.partner", false, true);
             await new Promise((resolve) => setTimeout(resolve, 800));
             this.assertTrue(this.isFormOpen());
-            const record_id = await this.terminal.executeCommand(
+            const record_id = await this.terminal.execute(
                 `create res.partner "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
@@ -154,14 +142,14 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_unlink: async function () {
-            const record_id = await this.terminal.executeCommand(
+            const record_id = await this.terminal.execute(
                 `create -m res.partner -v "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
                 false,
                 true
             );
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 `unlink -m res.partner -i ${record_id}`,
                 false,
                 true
@@ -169,14 +157,14 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(res);
         },
         test_unlink__no_arg: async function () {
-            const record_id = await this.terminal.executeCommand(
+            const record_id = await this.terminal.execute(
                 `create res.partner "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
                 false,
                 true
             );
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 `unlink res.partner ${record_id}`,
                 false,
                 true
@@ -185,21 +173,21 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_write: async function () {
-            const record_a_id = await this.terminal.executeCommand(
+            const record_a_id = await this.terminal.execute(
                 `create -m res.partner -v "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
                 false,
                 true
             );
-            const record_b_id = await this.terminal.executeCommand(
+            const record_b_id = await this.terminal.execute(
                 `create -m res.partner -v "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
                 false,
                 true
             );
-            let res = await this.terminal.executeCommand(
+            let res = await this.terminal.execute(
                 `write -m res.partner -i ${record_b_id} -v "{'name': '${_.uniqueId(
                     "Other name Test #"
                 )}'}"`,
@@ -207,7 +195,7 @@ odoo.define("terminal.tests.common", function (require) {
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 `write -m res.partner -i "${record_a_id}, ${record_b_id}" -v "{'name': '${_.uniqueId(
                     "Other name Test #"
                 )}'}"`,
@@ -217,21 +205,21 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(res);
         },
         test_write__no_arg: async function () {
-            const record_a_id = await this.terminal.executeCommand(
+            const record_a_id = await this.terminal.execute(
                 `create -m res.partner -v "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
                 false,
                 true
             );
-            const record_b_id = await this.terminal.executeCommand(
+            const record_b_id = await this.terminal.execute(
                 `create res.partner "{'name': '${_.uniqueId(
                     "This is a Test #"
                 )}'}"`,
                 false,
                 true
             );
-            let res = await this.terminal.executeCommand(
+            let res = await this.terminal.execute(
                 `write res.partner ${record_b_id} "{'name': '${_.uniqueId(
                     "Other name Test #"
                 )}'}"`,
@@ -239,7 +227,7 @@ odoo.define("terminal.tests.common", function (require) {
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 `write res.partner "${record_a_id}, ${record_b_id}" "{'name': '${_.uniqueId(
                     "Other name Test #"
                 )}'}"`,
@@ -250,7 +238,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_search: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "search -m res.partner -f name -d \"[['id', '>', 1]]\" -l 3 -of 2 -o \"id desc\"",
                 false,
                 true
@@ -258,7 +246,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertEqual(res.length, 3);
         },
         test_search__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "search res.partner name \"[['id', '>', 1]]\" 4 2 \"id desc\"",
                 false,
                 true
@@ -267,7 +255,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_call: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "call -m res.partner -c address_get -a [1]",
                 false,
                 true
@@ -275,7 +263,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertNotEmpty(res);
         },
         test_call__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "call res.partner address_get [1]",
                 false,
                 true
@@ -285,7 +273,7 @@ odoo.define("terminal.tests.common", function (require) {
 
         test_upgrade: async function () {
             await Utils.asyncSleep(6000);
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "upgrade -m sms",
                 false,
                 true
@@ -295,18 +283,14 @@ odoo.define("terminal.tests.common", function (require) {
         },
         test_upgrade__no_arg: async function () {
             await Utils.asyncSleep(6000);
-            const res = await this.terminal.executeCommand(
-                "upgrade sms",
-                false,
-                true
-            );
+            const res = await this.terminal.execute("upgrade sms", false, true);
             await Utils.asyncSleep(6000);
             this.assertEqual(res?.name, "sms");
         },
 
         test_install: async function () {
             await Utils.asyncSleep(6000);
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "install -m sms",
                 false,
                 true
@@ -316,18 +300,14 @@ odoo.define("terminal.tests.common", function (require) {
         },
         test_install__no_arg: async function () {
             await Utils.asyncSleep(6000);
-            const res = await this.terminal.executeCommand(
-                "install sms",
-                false,
-                true
-            );
+            const res = await this.terminal.execute("install sms", false, true);
             await Utils.asyncSleep(6000);
             this.assertEqual(res?.name, "sms");
         },
 
         test_uninstall: async function () {
             await Utils.asyncSleep(6000);
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "uninstall -m sms --force",
                 false,
                 true
@@ -337,7 +317,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
         test_uninstall__no_arg: async function () {
             await Utils.asyncSleep(6000);
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "uninstall sms --force",
                 false,
                 true
@@ -347,33 +327,29 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_action: async function () {
-            let res = await this.terminal.executeCommand(
-                "action -a 5",
-                false,
-                true
-            );
+            let res = await this.terminal.execute("action -a 5", false, true);
             this.assertEqual(res.id, 5);
             if (this.terminal._mode === this.terminal.MODES.BACKEND_NEW) {
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action -a base.action_res_company_form",
                     false,
                     true
                 );
                 this.assertEqual(res.id, "base.action_res_company_form");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action -a \"{'type': 'ir.actions.act_window', 'res_model': 'res.currency', 'view_type': 'form', 'view_mode': 'form', 'views': [[false, 'form']], 'target': 'current', 'res_id': 1}\"",
                     false,
                     true
                 );
                 this.assertNotEmpty(res);
             } else {
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action -a base.action_res_company_form",
                     false,
                     true
                 );
                 this.assertEqual(res.xml_id, "base.action_res_company_form");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action -a \"{'type': 'ir.actions.act_window', 'res_model': 'res.currency', 'view_type': 'form', 'view_mode': 'form', 'views': [[false, 'form']], 'target': 'current', 'res_id': 1}\"",
                     false,
                     true
@@ -383,33 +359,29 @@ odoo.define("terminal.tests.common", function (require) {
             }
         },
         test_action__no_arg: async function () {
-            let res = await this.terminal.executeCommand(
-                "action 5",
-                false,
-                true
-            );
+            let res = await this.terminal.execute("action 5", false, true);
             this.assertEqual(res.id, 5);
             if (this.terminal._mode === this.terminal.MODES.BACKEND_NEW) {
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action base.action_res_company_form",
                     false,
                     true
                 );
                 this.assertEqual(res.id, "base.action_res_company_form");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action \"{'type': 'ir.actions.act_window', 'res_model': 'res.currency', 'view_type': 'form', 'view_mode': 'form', 'views': [[false, 'form']], 'target': 'current', 'res_id': 1}\"",
                     false,
                     true
                 );
                 this.assertNotEmpty(res);
             } else {
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action base.action_res_company_form",
                     false,
                     true
                 );
                 this.assertEqual(res.xml_id, "base.action_res_company_form");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "action \"{'type': 'ir.actions.act_window', 'res_model': 'res.currency', 'view_type': 'form', 'view_mode': 'form', 'views': [[false, 'form']], 'target': 'current', 'res_id': 1}\"",
                     false,
                     true
@@ -420,16 +392,12 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_whoami: async function () {
-            const res = await this.terminal.executeCommand(
-                "whoami",
-                false,
-                true
-            );
+            const res = await this.terminal.execute("whoami", false, true);
             this.assertEqual(res?.login, "admin");
         },
 
         test_caf: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "caf -m res.currency -f symbol -fi \"{'required': true}\"",
                 false,
                 true
@@ -438,7 +406,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertEmpty(res.id);
         },
         test_caf__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "caf res.currency symbol \"{'required': true}\"",
                 false,
                 true
@@ -448,25 +416,25 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_cam: async function () {
-            let res = await this.terminal.executeCommand(
+            let res = await this.terminal.execute(
                 "cam -m res.currency -o create",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "cam -m res.currency -o unlink",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "cam -m res.currency -o write",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "cam -m res.currency -o read",
                 false,
                 true
@@ -474,7 +442,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(res);
         },
         test_cam__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "cam res.currency create",
                 false,
                 true
@@ -484,11 +452,11 @@ odoo.define("terminal.tests.common", function (require) {
 
         test_lastseen: async function () {
             // Only test that can be called
-            await this.terminal.executeCommand("lastseen", false, true);
+            await this.terminal.execute("lastseen", false, true);
         },
 
         test_read: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "read -m res.currency -i 1 -f symbol",
                 false,
                 true
@@ -498,7 +466,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertEmpty(res[0]?.display_name);
         },
         test_read__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "read res.currency 1 symbol",
                 false,
                 true
@@ -509,33 +477,25 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_context: async function () {
-            let res = await this.terminal.executeCommand(
-                "context",
-                false,
-                true
-            );
+            let res = await this.terminal.execute("context", false, true);
             this.assertIn(res, "uid");
-            res = await this.terminal.executeCommand(
-                "context -o read",
-                false,
-                true
-            );
+            res = await this.terminal.execute("context -o read", false, true);
             this.assertIn(res, "uid");
             // At the moment operations with the context are not possible in legacy mode
             if (this.terminal._mode !== this.terminal.MODES.BACKEND_NEW) {
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "context -o write -v \"{'test_key': 'test_value'}\"",
                     false,
                     true
                 );
                 this.assertIn(res, "test_key");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "context -o set -v \"{'test_key': 'test_value_change'}\"",
                     false,
                     true
                 );
                 this.assertEqual(res.test_key, "test_value_change");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "context -o delete -v test_key",
                     false,
                     true
@@ -544,27 +504,23 @@ odoo.define("terminal.tests.common", function (require) {
             }
         },
         test_context__no_arg: async function () {
-            let res = await this.terminal.executeCommand(
-                "context read",
-                false,
-                true
-            );
+            let res = await this.terminal.execute("context read", false, true);
             this.assertIn(res, "uid");
             // At the moment operations with the context are not possible in legacy mode
             if (this.terminal._mode !== this.terminal.MODES.BACKEND_NEW) {
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "context write \"{'test_key': 'test_value'}\"",
                     false,
                     true
                 );
                 this.assertIn(res, "test_key");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "context set \"{'test_key': 'test_value_change'}\"",
                     false,
                     true
                 );
                 this.assertEqual(res.test_key, "test_value_change");
-                res = await this.terminal.executeCommand(
+                res = await this.terminal.execute(
                     "context delete test_key",
                     false,
                     true
@@ -574,46 +530,42 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_version: async function () {
-            const res = await this.terminal.executeCommand(
-                "version",
-                false,
-                true
-            );
+            const res = await this.terminal.execute("version", false, true);
             this.assertTrue(res);
         },
 
         test_longpolling: async function () {
-            let res = await this.terminal.executeCommand(
+            let res = await this.terminal.execute(
                 "longpolling -o verbose",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling -o off",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling -o add_channel -p test_channel",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling -o del_channel -p test_channel",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling -o stop",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling -o start",
                 false,
                 true
@@ -621,50 +573,34 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(res);
         },
         test_longpolling__no_arg: async function () {
-            let res = await this.terminal.executeCommand(
+            let res = await this.terminal.execute(
                 "longpolling verbose",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
-                "longpolling off",
-                false,
-                true
-            );
+            res = await this.terminal.execute("longpolling off", false, true);
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling add_channel test_channel",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "longpolling del_channel test_channel",
                 false,
                 true
             );
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
-                "longpolling stop",
-                false,
-                true
-            );
+            res = await this.terminal.execute("longpolling stop", false, true);
             this.assertTrue(res);
-            res = await this.terminal.executeCommand(
-                "longpolling start",
-                false,
-                true
-            );
+            res = await this.terminal.execute("longpolling start", false, true);
             this.assertTrue(res);
         },
 
         _isLogin: async function (login) {
-            const res = await this.terminal.executeCommand(
-                "whoami",
-                false,
-                true
-            );
+            const res = await this.terminal.execute("whoami", false, true);
             return res?.login === login;
         },
 
@@ -673,20 +609,20 @@ odoo.define("terminal.tests.common", function (require) {
         //     // Get active database
         //     // FIXME: This type of calls are ugly, maybe some day
         //     // can scan the dependencies.
-        //     let res = await this.terminal.executeCommand(
+        //     let res = await this.terminal.execute(
         //         "dblist --only-active",
         //         false,
         //         true
         //     );
         //     const dbname = res;
-        //     res = await this.terminal.executeCommand(
+        //     res = await this.terminal.execute(
         //         `login -d ${dbname} -u demo -p demo --no-reload`,
         //         false,
         //         true
         //     );
         //     this.assertTrue(res);
         //     this.assertTrue(await this._isLogin("demo"));
-        //     res = await this.terminal.executeCommand(
+        //     res = await this.terminal.execute(
         //         `login -d ${dbname} -u #admin --no-reload`,
         //         false,
         //         true
@@ -698,20 +634,20 @@ odoo.define("terminal.tests.common", function (require) {
         //     // Get active database
         //     // FIXME: This type of calls are ugly, maybe some day
         //     // can scan the dependencies.
-        //     let res = await this.terminal.executeCommand(
+        //     let res = await this.terminal.execute(
         //         "dblist --only-active",
         //         false,
         //         true
         //     );
         //     const dbname = res;
-        //     res = await this.terminal.executeCommand(
+        //     res = await this.terminal.execute(
         //         `login ${dbname} demo demo --no-reload`,
         //         false,
         //         true
         //     );
         //     this.assertTrue(res);
         //     this.assertTrue(await this._isLogin("demo"));
-        //     res = await this.terminal.executeCommand(
+        //     res = await this.terminal.execute(
         //         `login ${dbname} #admin --no-reload`,
         //         false,
         //         true
@@ -721,7 +657,7 @@ odoo.define("terminal.tests.common", function (require) {
         // },
 
         test_uhg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "uhg -g base.group_user",
                 false,
                 true
@@ -729,7 +665,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(res);
         },
         test_uhg__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "uhg base.group_user",
                 false,
                 true
@@ -738,10 +674,10 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_dblist: async function () {
-            let res = await this.terminal.executeCommand("dblist", false, true);
+            let res = await this.terminal.execute("dblist", false, true);
             this.assertNotEmpty(res);
 
-            res = await this.terminal.executeCommand(
+            res = await this.terminal.execute(
                 "dblist --only-active",
                 false,
                 true
@@ -751,12 +687,12 @@ odoo.define("terminal.tests.common", function (require) {
 
         test_tour: async function () {
             // This test is incomplete to avoid page reloads
-            const res = await this.terminal.executeCommand("tour", false, true);
+            const res = await this.terminal.execute("tour", false, true);
             this.assertNotEmpty(res);
         },
 
         test_json: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "json -e /web_editor/get_assets_editor_resources -d \"{'key':'web.assets_backend'}\"",
                 false,
                 true
@@ -764,7 +700,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertIn(res, "views");
         },
         test_json__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "json /web_editor/get_assets_editor_resources \"{'key':'web.assets_backend'}\"",
                 false,
                 true
@@ -773,7 +709,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_depends: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "depends -m mail",
                 false,
                 true
@@ -781,7 +717,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertNotEmpty(res);
         },
         test_depends__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "depends mail",
                 false,
                 true
@@ -790,18 +726,18 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_ual: async function () {
-            const res = await this.terminal.executeCommand("ual", false, true);
+            const res = await this.terminal.execute("ual", false, true);
             this.assertTrue(res);
         },
 
         test_count: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "count -m res.currency",
                 false,
                 true
             );
             this.assertTrue(res > 0);
-            const resb = await this.terminal.executeCommand(
+            const resb = await this.terminal.execute(
                 "count -m res.currency -d \"[['symbol', '=', '$']]\"",
                 false,
                 true
@@ -809,13 +745,13 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue(resb < res);
         },
         test_count__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "count res.currency",
                 false,
                 true
             );
             this.assertTrue(res > 0);
-            const resb = await this.terminal.executeCommand(
+            const resb = await this.terminal.execute(
                 "count res.currency \"[['symbol', '=', '$']]\"",
                 false,
                 true
@@ -824,7 +760,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_ref: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "ref -x base.main_company,base.model_res_partner",
                 false,
                 true
@@ -833,7 +769,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertEqual(res.length, 2);
         },
         test_ref__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "ref base.main_company,base.model_res_partner",
                 false,
                 true
@@ -843,7 +779,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_rpc: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "rpc -o \"{'route': '/jsonrpc', 'method': 'server_version', 'params': {'service': 'db'}}\"",
                 false,
                 true
@@ -851,7 +787,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertNotEmpty(res);
         },
         test_rpc__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "rpc \"{'route': '/jsonrpc', 'method': 'server_version', 'params': {'service': 'db'}}\"",
                 false,
                 true
@@ -860,7 +796,7 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_metadata: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "metadata -m res.partner -i 1",
                 false,
                 true
@@ -869,7 +805,7 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertEqual(res.xmlid, "base.main_partner");
         },
         test_metadata__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "metadata res.partner 1",
                 false,
                 true
@@ -879,27 +815,27 @@ odoo.define("terminal.tests.common", function (require) {
         },
 
         test_barcode: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "barcode -o info",
                 false,
                 true
             );
             this.assertNotEmpty(res);
-            await this.terminal.executeCommand(
+            await this.terminal.execute(
                 "view -m res.partner -i 1",
                 false,
                 true
             );
             await new Promise((resolve) => setTimeout(resolve, 2500));
             this.assertTrue($(".o_cp_buttons .o_form_button_edit").length > 0);
-            await this.terminal.executeCommand(
+            await this.terminal.execute(
                 "barcode -o send -d O-CMD.EDIT",
                 false,
                 true
             );
             await new Promise((resolve) => setTimeout(resolve, 2500));
             this.assertTrue($(".o_cp_buttons .o_form_button_save").length > 0);
-            await this.terminal.executeCommand(
+            await this.terminal.execute(
                 "barcode -o send -d O-CMD.DISCARD,O-CMD.EDIT,O-CMD.DISCARD",
                 false,
                 true
@@ -908,27 +844,19 @@ odoo.define("terminal.tests.common", function (require) {
             this.assertTrue($(".o_cp_buttons .o_form_button_edit").length > 0);
         },
         test_barcode__no_arg: async function () {
-            const res = await this.terminal.executeCommand(
+            const res = await this.terminal.execute(
                 "barcode info",
                 false,
                 true
             );
             this.assertNotEmpty(res);
-            await this.terminal.executeCommand(
-                "view res.partner 1",
-                false,
-                true
-            );
+            await this.terminal.execute("view res.partner 1", false, true);
             await new Promise((resolve) => setTimeout(resolve, 2500));
             this.assertTrue($(".o_cp_buttons .o_form_button_edit").length > 0);
-            await this.terminal.executeCommand(
-                "barcode send O-CMD.EDIT",
-                false,
-                true
-            );
+            await this.terminal.execute("barcode send O-CMD.EDIT", false, true);
             await new Promise((resolve) => setTimeout(resolve, 2500));
             this.assertTrue($(".o_cp_buttons .o_form_button_save").length > 0);
-            await this.terminal.executeCommand(
+            await this.terminal.execute(
                 "barcode send O-CMD.DISCARD,O-CMD.EDIT,O-CMD.DISCARD",
                 false,
                 true

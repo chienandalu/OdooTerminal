@@ -34,6 +34,7 @@ odoo.define("terminal.Terminal", function (require) {
         },
 
         _registeredCmds: {},
+        _registeredNames: {},
         _inputHistory: [],
         _searchCommandIter: 0,
         _searchCommandQuery: "",
@@ -100,8 +101,6 @@ odoo.define("terminal.Terminal", function (require) {
                 onInputKeyUp: this._onInputKeyUp.bind(this),
                 onInput: this._onInput.bind(this),
             });
-            this._parameterReader = new ParameterReader();
-            this._commandAssistant = new CommandAssistant(this);
             this._jobs = [];
             this._errorCount = 0;
 
@@ -147,6 +146,11 @@ odoo.define("terminal.Terminal", function (require) {
 
             return new Promise(async (resolve, reject) => {
                 try {
+                    this._parameterReader = new ParameterReader.ParameterReader(
+                        this._registeredCmds,
+                        this._storageLocal
+                    );
+                    this._commandAssistant = new CommandAssistant(this);
                     await this._super.apply(this, arguments);
                     await this.screen.start(this.$el);
                     this.screen.applyStyle("opacity", this._config.opacity);
@@ -180,12 +184,6 @@ odoo.define("terminal.Terminal", function (require) {
             this._storage.removeItem("terminal_screen");
         },
 
-        getAliasCommand: function (cmd_name) {
-            const aliases =
-                this._storageLocal.getItem("terminal_aliases") || {};
-            return aliases[cmd_name];
-        },
-
         registerCommand: function (cmd, cmd_def) {
             this._registeredCmds[cmd] = _.extend(
                 {
@@ -217,84 +215,328 @@ odoo.define("terminal.Terminal", function (require) {
             return [cmd, cmd_name];
         },
 
-        executeCommand: function (cmd_raw, store = true, silent = false) {
+        execute: function (cmd_raw, store = true, silent = false) {
             return new Promise(async (resolve, reject) => {
-                let cmd = cmd_raw || "";
-                const cmd_split = cmd_raw.split(" ");
-                const cmd_name = cmd_split[0];
-                if (!cmd_name) {
-                    return reject();
-                }
-
                 await this._wakeUp();
 
-                try {
-                    cmd = await this._resolveRunners(cmd);
-                } catch (err) {
-                    return reject(err);
-                }
-                let cmd_def = this._registeredCmds[cmd_name];
-                let scmd = {};
-
-                try {
-                    // Stop execution if the command doesn't exists
-                    if (!cmd_def) {
-                        [, cmd_def] = this._searchCommandDefByAlias(cmd_name);
-                        if (!cmd_def) {
-                            const cmd_res =
-                                await this._alternativeExecuteCommand(
-                                    cmd,
-                                    store,
-                                    silent
-                                );
-                            return resolve(cmd_res);
-                        }
-                    }
-
-                    this._parameterReader.resetStores();
-                    scmd = this._parameterReader.parse(cmd, cmd_def);
-                } catch (err) {
-                    if (!silent) {
-                        this.screen.printCommand(cmd);
-                    }
-                    this.screen.printError(
-                        `<span class='o_terminal_click ` +
-                            `o_terminal_cmd' data-cmd='help ${cmd_name}'>` +
-                            `${err}!</span>`
-                    );
-                    if (store && !cmd_def.secured) {
-                        this._storeUserInput(cmd_raw);
-                    }
-                    this.screen.cleanInput();
-                    return reject(err);
-                }
-                if (store && !cmd_def.secured) {
-                    this._storeUserInput(cmd_raw);
-                }
+                // Check if secured commands involved
                 if (!silent) {
-                    this.screen.printCommand(cmd_raw, cmd_def.secured);
+                    this.screen.printCommand(cmd_raw);
                 }
                 this.screen.cleanInput();
-                const res = await this._processCommandJob(
-                    scmd,
-                    cmd_def,
-                    silent
-                );
-                return resolve(res);
+                if (store) {
+                    this._storeUserInput(cmd_raw);
+                }
+                const cmd_res = [];
+                try {
+                    const results = await this.eval(cmd_raw, {silent: silent});
+                    for (const result of results) {
+                        cmd_res.push(result?.result);
+                    }
+                } catch (err) {
+                    this.screen.print(err);
+                    return reject(err);
+                }
+
+                if (cmd_res.length === 1) {
+                    return resolve(cmd_res[0]);
+                }
+                return resolve(cmd_res);
             });
         },
 
-        _executeCommands: function (cmds_raw) {
-            // Filter comments
-            const cmds = _.filter(cmds_raw, function (item) {
-                return item && item[0] !== "/" && item[1] !== "/";
-            });
-            const cmds_len = cmds.length;
-            for (
-                let x = 0;
-                x < cmds_len;
-                this.executeCommand(cmds[x++], false)
+        _callFunction: function (frame, parse_info, silent) {
+            const cmd_def = this._registeredCmds[frame.cmd];
+            const items_len = frame.values.length;
+            if (frame.args.length > items_len) {
+                return Promise.reject(`Invalid arguments!`);
+            }
+            let kwargs = {};
+            const values = cmd_def.generators
+                ? this._parameterReader.evalGenerators(frame.values)
+                : frame.values;
+            for (let index = items_len - 1; index >= 0; --index) {
+                let arg_name = frame.args.pop();
+                if (!arg_name) {
+                    const arg_def = cmd_def.args[index];
+                    if (!arg_def) {
+                        return Promise.reject(
+                            `Unexpected '${values[index]}' value!`
+                        );
+                    }
+                    arg_name = cmd_def.args[index].split("::")[1].split(":")[1];
+                }
+                kwargs[arg_name] = values[index];
+            }
+
+            kwargs = this._parameterReader.validateAndFormatArguments(
+                cmd_def,
+                kwargs
             );
+            return this._processCommandJob(
+                {
+                    cmdRaw: parse_info.inputRawString,
+                    cmdName: frame.cmd,
+                    cmdDef: cmd_def,
+                    kwargs: kwargs,
+                },
+                silent
+            );
+        },
+
+        _evalRunner: function (data) {
+            return new Promise(async (resolve, reject) => {
+                if (this._parameterReader.isRunner(data)) {
+                    const runner_cmd = this._parameterReader.getRunnerDef(data);
+                    try {
+                        let runner_ret = await this.eval(runner_cmd, {
+                            silent: true,
+                        });
+                        runner_ret = runner_ret ? runner_ret[0] : null;
+                        return resolve(runner_ret);
+                    } catch (err) {
+                        return reject(err);
+                    }
+                }
+                return resolve(data);
+            });
+        },
+
+        _getNextStackInstructionIndex: function (stack, type, start = 0) {
+            const stack_instr_len = stack.instructions.length;
+            for (let index = start; index < stack_instr_len; ++index) {
+                const [stype] = stack.instructions[index];
+                if (stype === type) {
+                    return index;
+                }
+            }
+            return null;
+        },
+
+        eval: function (cmd_raw, options) {
+            return new Promise(async (resolve, reject) => {
+                await this._wakeUp();
+                const parse_info = this._parameterReader.parse(cmd_raw, {
+                    registeredCmds: this._registeredCmds,
+                    registeredNames: this._registeredNames,
+                    needResetStores: true,
+                });
+                const stack = parse_info.stack;
+                const stack_instr_len = stack.instructions.length;
+                const root_frame = {
+                    store: {},
+                    values: [],
+                };
+                const frames = [];
+                const return_values = [];
+                let last_frame = null;
+                for (let index = 0; index < stack_instr_len; ++index) {
+                    const [type, tindex] = stack.instructions[index];
+                    const token =
+                        tindex >= 0 ? parse_info.inputTokens[tindex] : null;
+                    switch (type) {
+                        case ParameterReader.TYPES.PARSER.LOAD_NAME:
+                            {
+                                const cmd_name = stack.names.shift();
+
+                                // Check stores
+                                const frame = last_frame || root_frame;
+                                if (
+                                    last_frame &&
+                                    Object.hasOwn(last_frame.store, cmd_name)
+                                ) {
+                                    frame.values.push(
+                                        last_frame.store[cmd_name]
+                                    );
+                                    break;
+                                } else if (Object.hasOwn(root_frame.store, cmd_name)) {
+                                    frame.values.push(
+                                        root_frame.store[cmd_name]
+                                    );
+                                    break;
+                                } else if (Object.hasOwn(this._registeredNames, cmd_name)) {
+                                    frame.values.push(
+                                        this._registeredNames[cmd_name]
+                                    );
+                                    break;
+                                } else if (Object.hasOwn(this._registeredCmds, cmd_name)) {
+                                    last_frame = {
+                                        cmd: cmd_name,
+                                        store: {},
+                                        args: [],
+                                        values: [],
+                                    };
+                                    frames.push(last_frame);
+                                } else {
+                                    if (!options.silent) {
+                                        // Search similar commands
+                                        const similar_cmd =
+                                            this._searchSimiliarCommand(
+                                                cmd_name
+                                            );
+                                        if (similar_cmd) {
+                                            return reject(
+                                                this._templates.render(
+                                                    "UNKNOWN_COMMAND",
+                                                    {
+                                                        org_cmd: cmd_name,
+                                                        cmd: similar_cmd,
+                                                        pos: [
+                                                            token.start,
+                                                            token.end,
+                                                        ],
+                                                    }
+                                                )
+                                            );
+                                        } else {
+                                            return reject(
+                                                `Unknown name '${cmd_name}' at ${token.start}:${token.end}`
+                                            );
+                                        }
+                                    }
+                                    // Jump to next frame
+                                    // const inst_index = this._getNextStackInstructionIndex(this.instructions, ParameterReader.TYPES.PARSER.CALL_FUNCTION, index+1);
+                                    // if (inst_index) {
+                                    //     index = inst_index + 1;
+                                    // }
+                                }
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.LOAD_CONST:
+                            {
+                                const frame = last_frame || root_frame;
+                                const value = stack.values.shift();
+                                frame.values.push(
+                                    await this._evalRunner(value)
+                                );
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.LOAD_RUNNER:
+                            {
+                                const frame = last_frame || root_frame;
+                                const value = stack.values.shift();
+                                frame.values.push(
+                                    await this._evalRunner(value)
+                                );
+                            }
+                            break;    
+                        case ParameterReader.TYPES.PARSER.LOAD_ARG:
+                            {
+                                const arg = stack.arguments.shift();
+                                if (!last_frame) {
+                                    return reject(
+                                        `Argument '${arg}' not expected at ${token.start}:${token.end}`
+                                    );
+                                }
+                                const next_instr =
+                                    stack.instructions[index + 1];
+                                if (
+                                    next_instr[0] !==
+                                    ParameterReader.TYPES.PARSER.LOAD_CONST
+                                ) {
+                                    last_frame.values.push(true);
+                                }
+                                last_frame.args.push(arg);
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.CONCAT:
+                            {
+                                const allowed_types = [
+                                    ParameterReader.TYPES.PARSER.LOAD_CONST,
+                                    ParameterReader.TYPES.PARSER.LOAD_NAME,
+                                ];
+                                const frame = last_frame || root_frame;
+                                const prev_instr_a =
+                                    stack.instructions[index - 2];
+                                const prev_instr_b =
+                                    stack.instructions[index - 1];
+                                if (
+                                    prev_instr_a &&
+                                    allowed_types.indexOf(prev_instr_a[0]) ===
+                                        -1 &&
+                                    prev_instr_b &&
+                                    allowed_types.indexOf(prev_instr_b[0]) ===
+                                        -1
+                                ) {
+                                    return reject(
+                                        `Token '${token.value}' not expected at ${token.start}:${token.end}`
+                                    );
+                                }
+                                const valB = frame.values.pop();
+                                const valA = frame.values.pop();
+                                frame.values.push(valA + valB);
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.CALL_FUNCTION:
+                            {
+                                const frame = frames.pop();
+                                try {
+                                    const ret = await this._callFunction(
+                                        frame,
+                                        parse_info,
+                                        options.silent
+                                    );
+                                    last_frame = frames.at(-1);
+                                    if (last_frame) {
+                                        last_frame.values.push(ret);
+                                    } else {
+                                        root_frame.values.push(ret);
+                                    }
+                                } catch (err) {
+                                    return reject(err);
+                                }
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.RETURN_VALUE:
+                            {
+                                return_values.push(root_frame.values.pop());
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.STORE_NAME:
+                            {
+                                const frame = last_frame || root_frame;
+                                const vname = stack.names.shift();
+                                const vvalue = frame.values.pop();
+                                if (!_.isNaN(Number(vname))) {
+                                    return reject(
+                                        `Invalid name '${vname}' at ${token.start}:${token.end}`
+                                    );
+                                } else if (typeof vvalue === "undefined") {
+                                    const prev_token =
+                                        tindex > 0
+                                            ? parse_info.inputTokens[tindex - 1]
+                                            : null;
+                                    const pos = prev_token
+                                        ? [prev_token.start, prev_token.end]
+                                        : [token.start, token.end];
+                                    return reject(
+                                        `Invalid token '${token.value}' at ${pos[0]}:${pos[1]}`
+                                    );
+                                }
+                                frame.store[vname] = vvalue;
+                            }
+                            break;
+                        case ParameterReader.TYPES.PARSER.LOAD_DATA_ATTR:
+                            {
+                                const frame = last_frame || root_frame;
+                                const attr_name = frame.values.pop();
+                                const index_value = frame.values.length - 1;
+                                let value = frame.values[index_value];
+                                if (typeof value === 'undefined') {
+                                    return reject(`Cannot read properties of undefined (reading '${attr_name}')`);
+                                } else if (_.isNaN(Number(attr_name)) && value instanceof Array) {
+                                    value = _.pluck(value, attr_name).join(',');
+                                } else {
+                                    value = value[attr_name];
+                                }
+                                frame.values[index_value] = value;
+                            }
+                            break;
+                    }
+                }
+                _.extend(this._registeredNames, root_frame.store);
+                return resolve(return_values);
+            });
         },
 
         _wakeUp: function () {
@@ -374,95 +616,31 @@ odoo.define("terminal.Terminal", function (require) {
             this.$el[0].addEventListener("toggle", this.doToggle.bind(this));
         },
 
-        _resolveRunners: function (cmd) {
-            return new Promise(async (resolve, reject) => {
-                const pp_values = this._parameterReader.preparse(cmd);
-                const tasks = [];
-                for (const runner of pp_values.runners) {
-                    tasks.push(this.executeCommand(runner.cmd, false, true));
-                }
-                let pp_cmd = pp_values.cmd;
-                try {
-                    const results = await Promise.all(tasks);
-                    for (const index in results) {
-                        let value = results[index];
-                        const ext = pp_values.runners[index].ext;
-                        if (_.isArray(value)) {
-                            if (ext) {
-                                value = _.map(value, (item) => item[ext]).join(
-                                    ","
-                                );
-                            } else {
-                                value = _.map(value, (item) =>
-                                    JSON.stringify(item)
-                                ).join(",");
-                            }
-                        } else if (ext && _.isObject(value)) {
-                            value = value[ext];
-                        }
-                        pp_cmd = pp_cmd.replace(`=={${index}}`, value);
-                    }
-                } catch (err) {
-                    return reject(err);
-                }
-                return resolve(pp_cmd);
-            });
-        },
-
-        _alternativeExecuteCommand: function (
-            cmd_raw,
-            store = true,
-            silent = false
-        ) {
-            const cmd = cmd_raw || "";
-            const cmd_split = cmd_raw.split(" ");
-            const cmd_name = cmd_split[0];
-            // Try alias
-            let alias_cmd = this.getAliasCommand(cmd_name);
+        _executeAlias: function (command_info, silent = false) {
+            let alias_cmd = this.getAliasCommand(command_info.cmdName);
             if (alias_cmd) {
-                const scmd = this._parameterReader.parse(cmd);
-                const params_len = scmd.params.length;
+                const params_len = command_info.params.length;
                 let index = 0;
                 while (index < params_len) {
                     const re = new RegExp(
                         `\\$${Number(index) + 1}(?:\\[[^\\]]+\\])?`,
                         "g"
                     );
-                    alias_cmd = alias_cmd.replaceAll(re, scmd.params[index]);
+                    alias_cmd = alias_cmd.replaceAll(
+                        re,
+                        command_info.params[index][1]
+                    );
                     ++index;
                 }
                 alias_cmd = alias_cmd.replaceAll(
                     /\$\d+(?:\[([^\]]+)\])?/g,
-                    (match, group) => {
+                    (_, group) => {
                         return group || "";
                     }
                 );
-                if (store) {
-                    this._storeUserInput(cmd);
-                }
-                return this.executeCommand(alias_cmd, false, silent);
+                return this.eval(alias_cmd, {silent: silent});
             }
-
-            if (!silent) {
-                this.screen.printCommand(cmd);
-            }
-            // Search similar commands
-            const similar_cmd = this._searchSimiliarCommand(cmd_name);
-            if (similar_cmd) {
-                this.screen.print(
-                    this._templates.render("UNKNOWN_COMMAND", {
-                        cmd: similar_cmd,
-                        params: cmd_split.slice(1),
-                    })
-                );
-            } else {
-                this.screen.eprint(_t("Unknown command."));
-            }
-            if (store) {
-                this._storeUserInput(cmd);
-            }
-            this.screen.cleanInput();
-            return Promise.resolve();
+            return Promise.resolve(null);
         },
 
         _getContext: function (extra_context) {
@@ -492,21 +670,6 @@ odoo.define("terminal.Terminal", function (require) {
             this.screen.print(
                 this._templates.render("WELCOME", {ver: this.VERSION})
             );
-        },
-
-        _searchCommandDefByAlias: function (cmd) {
-            const cmd_keys = _.keys(this._registeredCmds);
-            const cmd_keys_len = cmd_keys.length;
-            let index = 0;
-            while (index < cmd_keys_len) {
-                const cmd_name = cmd_keys[index];
-                const cmd_def = this._registeredCmds[cmd_name];
-                if (cmd_def.aliases.indexOf(cmd) !== -1) {
-                    return [cmd_name, cmd_def];
-                }
-                ++index;
-            }
-            return [false, false];
         },
 
         // Key Distance Comparison (Simple mode)
@@ -711,17 +874,17 @@ odoo.define("terminal.Terminal", function (require) {
             return this._inputHistory[this._searchHistoryIter];
         },
 
-        _processCommandJob: function (scmd, cmd_def, silent = false) {
+        _processCommandJob: function (command_info, silent = false) {
             return new Promise(async (resolve) => {
-                const job_index = this.onStartCommand(scmd, cmd_def);
+                const job_index = this.onStartCommand(command_info);
                 let result = false;
                 let error = false;
                 let is_failed = false;
                 try {
                     this.__meta = {
-                        name: scmd.cmd,
-                        cmdRaw: scmd.cmdRaw,
-                        def: cmd_def,
+                        name: command_info.cmdName,
+                        cmdRaw: command_info.cmdRaw,
+                        def: command_info.cmdDef,
                         jobIndex: job_index,
                         silent: silent,
                     };
@@ -735,10 +898,11 @@ odoo.define("terminal.Terminal", function (require) {
                             // Do nothing.
                         };
                     }
-
                     result =
-                        (await cmd_def.callback.call(_this, scmd.params)) ||
-                        true;
+                        (await command_info.cmdDef.callback.call(
+                            _this,
+                            command_info.kwargs
+                        )) || true;
                     delete this.__meta;
                 } catch (err) {
                     is_failed = true;
@@ -800,7 +964,7 @@ odoo.define("terminal.Terminal", function (require) {
 
             if (!this._hasExecInitCmds) {
                 if (config.init_cmds) {
-                    this._executeCommands(config.init_cmds.split(/\r?\n/));
+                    this.eval(config.init_cmds, {silent: true});
                 }
                 this._hasExecInitCmds = true;
             }
@@ -824,9 +988,9 @@ odoo.define("terminal.Terminal", function (require) {
             }
         },
 
-        onStartCommand: function (scmd) {
+        onStartCommand: function (command_info) {
             const job_info = {
-                scmd: scmd,
+                cmdInfo: command_info,
                 healthy: true,
             };
             // Add new job on a empty space or new one
@@ -849,7 +1013,7 @@ odoo.define("terminal.Terminal", function (require) {
             clearTimeout(job_info.timeout);
             if (has_errors) {
                 this.screen.printError(
-                    `${_t("Error executing")} '${job_info.scmd.cmd}':`
+                    `${_t("Error executing")} '${job_info.cmdInfo.cmdName}':`
                 );
                 if (
                     typeof result === "object" &&
@@ -871,7 +1035,7 @@ odoo.define("terminal.Terminal", function (require) {
 
         _onClickTerminalCommand: function (ev) {
             if (Object.hasOwn(ev.target.dataset, "cmd")) {
-                this.executeCommand(ev.target.dataset.cmd);
+                this.execute(ev.target.dataset.cmd);
             }
         },
 
@@ -911,7 +1075,7 @@ odoo.define("terminal.Terminal", function (require) {
         },
 
         _onKeyEnter: function () {
-            this.executeCommand(this.screen.getUserInput());
+            this.execute(this.screen.getUserInput());
             this._searchCommandQuery = undefined;
             this.screen.preventLostInputFocus();
         },
@@ -938,33 +1102,52 @@ odoo.define("terminal.Terminal", function (require) {
         },
         _onKeyArrowRight: function (ev) {
             const user_input = this.screen.getUserInput();
-            this._assistantOptions = this._commandAssistant.getAvailableOptions(
+            this._commandAssistant.lazyGetAvailableOptions(
                 user_input,
-                this.screen.getInputCaretStartPos()
+                this.screen.getInputCaretStartPos(),
+                (options) => {
+                    this._assistantOptions = options;
+                    this._selAssistanOption = -1;
+                    this.screen.updateAssistantPanelOptions(
+                        this._assistantOptions,
+                        this._selAssistanOption
+                    );
+                    if (
+                        user_input &&
+                        ev.target.selectionStart === user_input.length
+                    ) {
+                        this._searchCommandQuery = user_input;
+                        this._searchHistoryIter = this._inputHistory.length;
+                        this._onKeyArrowUp();
+                        this._searchCommandQuery = user_input;
+                        this._searchHistoryIter = this._inputHistory.length;
+                    }
+                },
+                {
+                    registeredCmds: this._registeredCmds,
+                    registeredNames: this._registeredNames,
+                    needResetStores: false,
+                }
             );
-            this._selAssistanOption = -1;
-            this.screen.updateAssistantPanelOptions(
-                this._assistantOptions,
-                this._selAssistanOption
-            );
-            if (user_input && ev.target.selectionStart === user_input.length) {
-                this._searchCommandQuery = user_input;
-                this._searchHistoryIter = this._inputHistory.length;
-                this._onKeyArrowUp();
-                this._searchCommandQuery = user_input;
-                this._searchHistoryIter = this._inputHistory.length;
-            }
         },
         _onKeyArrowLeft: function () {
             const user_input = this.screen.getUserInput();
-            this._assistantOptions = this._commandAssistant.getAvailableOptions(
+            this._commandAssistant.lazyGetAvailableOptions(
                 user_input,
-                this.screen.getInputCaretStartPos()
-            );
-            this._selAssistanOption = -1;
-            this.screen.updateAssistantPanelOptions(
-                this._assistantOptions,
-                this._selAssistanOption
+                this.screen.getInputCaretStartPos(),
+                (options) => {
+                    this._assistantOptions = options;
+                    this._selAssistanOption = -1;
+                    this.screen.updateAssistantPanelOptions(
+                        this._assistantOptions,
+                        this._selAssistanOption
+                    );
+                },
+                {
+                    registeredCmds: this._registeredCmds,
+                    registeredNames: this._registeredNames,
+                    needResetStores: false,
+                }
             );
         },
         _onKeyTab: function () {
@@ -972,13 +1155,20 @@ odoo.define("terminal.Terminal", function (require) {
             if (_.isEmpty(user_input)) {
                 return;
             }
-            const scmd = this._parameterReader.parse(user_input);
+            const parse_info = this._parameterReader.parse(user_input, {
+                registeredCmds: this._registeredCmds,
+                registeredNames: this._registeredNames,
+            });
             const caret_pos = this.screen.getInputCaretStartPos();
-            const sel_param_index =
+            let [sel_cmd_index, sel_param_index] =
                 this._commandAssistant.getSelectedParameterIndex(
-                    scmd,
+                    parse_info,
                     caret_pos
                 );
+            if (sel_cmd_index === null) {
+                return;
+            }
+            const command_info = parse_info.commands[sel_cmd_index];
             ++this._selAssistanOption;
             if (this._selAssistanOption >= this._assistantOptions.length) {
                 this._selAssistanOption = 0;
@@ -989,31 +1179,24 @@ odoo.define("terminal.Terminal", function (require) {
             }
 
             let res_str = "";
-            let n_caret_pos = -1;
-            if (sel_param_index === -1) {
-                res_str = option.string;
-                n_caret_pos = res_str.length;
-                if (scmd.params.length > 0) {
-                    res_str += ` ${scmd.params.join(" ")}`;
+            let n_caret_pos = 0;
+            const s_params = _.clone(command_info.cmdRaw);
+            if (parse_info.inputRawString.charCodeAt(caret_pos - 1) === 32) {
+                ++sel_param_index;
+                if (sel_param_index >= s_params.length) {
+                    s_params.push(`${option.string} `);
                 }
             } else {
-                const s_params = _.clone(scmd.params);
-                if (sel_param_index >= s_params.length) {
-                    s_params.push(option.string);
-                } else {
-                    s_params[sel_param_index] = option.string;
-                    n_caret_pos = scmd.cmd.length + 1;
-                    for (const index in s_params) {
-                        if (index > sel_param_index) {
-                            break;
-                        }
-                        const s_param = s_params[index];
-                        n_caret_pos +=
-                            s_param.length + (index < sel_param_index ? 1 : 0);
-                    }
-                }
-                res_str = `${scmd.cmd} ${s_params.join(" ")}`;
+                s_params[sel_param_index] = `${option.string} `;
             }
+            for (const index in s_params) {
+                if (index > sel_param_index) {
+                    break;
+                }
+                n_caret_pos += s_params[index].length;
+            }
+            n_caret_pos -= 1;
+            res_str = s_params.join("");
             if (!_.isEmpty(res_str)) {
                 this.screen.updateInput(res_str);
             }
@@ -1030,24 +1213,32 @@ odoo.define("terminal.Terminal", function (require) {
             // Fish-like feature
             this.screen.cleanShadowInput();
             const user_input = this.screen.getUserInput();
-            this._assistantOptions = this._commandAssistant.getAvailableOptions(
+            this._commandAssistant.lazyGetAvailableOptions(
                 user_input,
-                this.screen.getInputCaretStartPos()
+                this.screen.getInputCaretStartPos(),
+                (options) => {
+                    this._assistantOptions = options;
+                    this._selAssistanOption = -1;
+                    this.screen.updateAssistantPanelOptions(
+                        this._assistantOptions,
+                        this._selAssistanOption
+                    );
+                    if (user_input) {
+                        this._searchCommandQuery = user_input;
+                        this._searchHistoryIter = this._inputHistory.length;
+                        new Promise((resolve) => {
+                            resolve(this._doSearchPrevHistory());
+                        }).then((found_hist) => {
+                            this.screen.updateShadowInput(found_hist || "");
+                        });
+                    }
+                },
+                {
+                    registeredCmds: this._registeredCmds,
+                    registeredNames: this._registeredNames,
+                    needResetStores: false,
+                }
             );
-            this._selAssistanOption = -1;
-            this.screen.updateAssistantPanelOptions(
-                this._assistantOptions,
-                this._selAssistanOption
-            );
-            if (user_input) {
-                this._searchCommandQuery = user_input;
-                this._searchHistoryIter = this._inputHistory.length;
-                new Promise((resolve) => {
-                    resolve(this._doSearchPrevHistory());
-                }).then((found_hist) => {
-                    this.screen.updateShadowInput(found_hist || "");
-                });
-            }
         },
 
         _onInputKeyUp: function (ev) {
@@ -1107,7 +1298,7 @@ odoo.define("terminal.Terminal", function (require) {
                 const keybind_str = JSON.stringify(keybind);
                 const keybind_cmds = this._config.shortcuts[keybind_str];
                 if (keybind_cmds) {
-                    this.executeCommand(keybind_cmds, false, true);
+                    this.execute(keybind_cmds, false, true);
                     ev.preventDefault();
                 }
             }
@@ -1118,7 +1309,8 @@ odoo.define("terminal.Terminal", function (require) {
                 if (
                     jobs.length === 1 &&
                     (!jobs[0] ||
-                        ["reload", "login"].indexOf(jobs[0].scmd.cmd) !== -1)
+                        ["reload", "login"].indexOf(jobs[0].cmdInfo.cmdName) !==
+                            -1)
                 ) {
                     return;
                 }
@@ -1133,7 +1325,7 @@ odoo.define("terminal.Terminal", function (require) {
                     _.map(
                         jobs,
                         (item) =>
-                            `${item.scmd.cmd} <small><i>${item.scmd.cmdRaw}</i></small>`
+                            `${item.cmdInfo.cmdName} <small><i>${item.cmdInfo.cmdRaw}</i></small>`
                     )
                 );
                 this.doShow();

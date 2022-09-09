@@ -670,7 +670,7 @@ odoo.define("terminal.functions.Common", function (require) {
                     this.screen.updateInputInfo(login);
                     this.screen.print(`Successfully logged as '${login}'`);
                     if (!kwargs.no_reload) {
-                        this.executeCommand("reload", false, true);
+                        this.execute("reload", false, true);
                     }
                     return result;
                 });
@@ -680,7 +680,7 @@ odoo.define("terminal.functions.Common", function (require) {
             return session.session_logout().then((result) => {
                 this.screen.updateInputInfo("Public User");
                 this.screen.print("Logged out");
-                this.executeCommand("reload", false, true);
+                this.execute("reload", false, true);
                 return result;
             });
         },
@@ -1083,7 +1083,7 @@ odoo.define("terminal.functions.Common", function (require) {
                     const modue_infos = await this._searchModule(kwargs.module);
                     if (!_.isEmpty(modue_infos)) {
                         if (!kwargs.force) {
-                            const depends = await this.executeCommand(
+                            const depends = await this.execute(
                                 `depends -m ${kwargs.module}`,
                                 false,
                                 true
@@ -1191,7 +1191,7 @@ odoo.define("terminal.functions.Common", function (require) {
                                 `There are still results to print (${buff.data.length} records). Show more?::y:n::y`
                             );
                             if (res === "y") {
-                                this.executeCommand(
+                                this.execute(
                                     `search -m ${buff.model} --more`,
                                     false,
                                     false
@@ -1245,7 +1245,7 @@ odoo.define("terminal.functions.Common", function (require) {
                                     } records). Show more?::y:n::y`
                                 );
                                 if (res === "y") {
-                                    this.executeCommand(
+                                    this.execute(
                                         `search -m ${kwargs.model} --more`,
                                         false,
                                         false

@@ -80,7 +80,7 @@ odoo.define("terminal.core.ParameterGenerator", function (require) {
             );
         },
 
-        parse: function (params) {
+        eval: function (params) {
             const parsed_params = [];
             this._resetStoreIndexes();
             const params_len = params.length;

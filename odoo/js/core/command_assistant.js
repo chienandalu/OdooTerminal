@@ -6,27 +6,29 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
 
     const Class = require("web.Class");
     const mixins = require("web.mixins");
+    const ParameterReaderTypes = require("terminal.core.ParameterReader").TYPES;
 
     const CommandAssistant = Class.extend(mixins.ParentedMixin, {
         init: function (parent) {
             this.setParent(parent);
             this._parameterReader = parent._parameterReader;
             this._registeredCmds = parent._registeredCmds;
-        },
-
-        _getAvailableCommandNames: function (scmd) {
-            const cmd_names = Object.keys(this._registeredCmds);
-            return _.filter(cmd_names, (cmd_name) =>
-                cmd_name.startsWith(scmd.cmd)
+            this.lazyGetAvailableOptions = _.debounce(
+                this._getAvailableOptions,
+                175
             );
         },
 
-        _getAvailableArguments: function (scmd, arg_name) {
-            const cmd_def = this._registeredCmds[scmd.cmd];
+        _getAvailableCommandNames: function (name) {
+            const cmd_names = Object.keys(this._registeredCmds);
+            return _.filter(cmd_names, (cmd_name) => cmd_name.startsWith(name));
+        },
+
+        _getAvailableArguments: function (command_info, arg_name) {
             const s_arg_name =
                 arg_name && arg_name.substr(arg_name[1] === "-" ? 2 : 1);
             const arg_infos = [];
-            for (const arg of cmd_def.args) {
+            for (const arg of command_info.args) {
                 const arg_info = this._parameterReader.getArgumentInfo(arg);
                 if (!s_arg_name || arg_info.names.long.startsWith(s_arg_name)) {
                     arg_infos.push(arg_info);
@@ -35,29 +37,22 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
             return arg_infos;
         },
 
-        _getAvailableParameters: function (scmd, sel_param_index, param) {
-            const cmd_def = this._registeredCmds[scmd.cmd];
-            const prev_param =
-                sel_param_index > 0 && scmd.params[sel_param_index - 1];
-            let arg_info = false;
-            if (!prev_param || prev_param[0] !== "-") {
-                // Its a unnamed parameter
-                const arg = cmd_def.args[sel_param_index];
-                arg_info = arg && this._parameterReader.getArgumentInfo(arg);
-            } else if (prev_param[0] === "-" && prev_param.length > 1) {
-                // Its a named parameter
-                arg_info = this._parameterReader.getArgumentInfoByName(
-                    cmd_def.args,
-                    prev_param.substr(prev_param[1] === "-" ? 2 : 1)
-                );
-            }
+        _getAvailableParameters: function (
+            command_info,
+            arg_name,
+            arg_value,
+        ) {
+            let arg_info = this._parameterReader.getArgumentInfoByName(
+                command_info.args,
+                arg_name
+            );
 
             const res_param_infos = [];
             if (!_.isEmpty(arg_info)) {
                 if (!_.isEmpty(arg_info.strict_values)) {
                     const def_value = arg_info.default_value;
                     for (const strict_value of arg_info.strict_values) {
-                        if (!param || String(strict_value).startsWith(param)) {
+                        if (!arg_value || String(strict_value).startsWith(arg_value)) {
                             res_param_infos.push({
                                 value: strict_value,
                                 is_required: arg_info.is_required,
@@ -67,7 +62,7 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
                     }
                 } else if (
                     arg_info.default_value &&
-                    String(arg_info.default_value).startsWith(param)
+                    String(arg_info.default_value).startsWith(arg_value)
                 ) {
                     res_param_infos.push({
                         value: arg_info.default_value,
@@ -80,75 +75,91 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
             return res_param_infos;
         },
 
-        getSelectedParameterIndex: function (scmd, caret_pos) {
-            let sel_param_index = null;
-            if (caret_pos <= scmd.cmd.length) {
-                sel_param_index = -1;
-            } else if (caret_pos > scmd.cmdRaw.trim().length) {
-                sel_param_index = scmd.params.length;
-            } else {
-                let offset = scmd.cmd.length + 1;
-                for (const index_param in scmd.params) {
-                    const params_len =
-                        scmd.params[index_param].length +
-                        (scmd.params[index_param].indexOf(" ") === -1 ? 0 : 2);
-                    if (
-                        caret_pos >= offset &&
-                        caret_pos <= offset + params_len
-                    ) {
-                        sel_param_index = index_param;
-                    }
-                    // +1 because space
-                    offset += params_len + 1;
+        getSelectedParameterIndex: function (parse_info, caret_pos) {
+            if (_.isEmpty(parse_info.inputTokens)) {
+                return [null, null];
+            }
+            let sel_token_index = null;
+            let sel_cmd_index = null;
+            const token_entries = parse_info.inputTokens.entries();
+            for (const [index, token] of token_entries) {
+                if (caret_pos > token.start && caret_pos <= token.end) {
+                    sel_token_index = index;
+                    break;
                 }
             }
-
-            return sel_param_index;
+            if (sel_token_index !== -1) {
+                let found = false;
+                for (let [type, tindex] of parse_info.stack.instructions) {
+                    if (tindex === sel_token_index) {
+                        found = true;
+                    }
+                    if (found && type === ParameterReaderTypes.PARSER.CALL_FUNCTION) {
+                        sel_cmd_index = tindex;
+                        break;
+                    }
+                }
+            }
+            return [sel_cmd_index, sel_token_index];
         },
 
-        getAvailableOptions: function (cmd_raw, caret_pos) {
-            if (_.isEmpty(cmd_raw)) {
-                return [];
+        _getAvailableOptions: function (data, caret_pos, callback, options) {
+            if (_.isEmpty(data)) {
+                callback([]);
+                return;
             }
-            const scmd = this._parameterReader.parse(cmd_raw);
-            const sel_param_index = this.getSelectedParameterIndex(
-                scmd,
-                caret_pos
-            );
-            const options = [];
-
-            if (sel_param_index === -1) {
-                // Its a command name
-                const cmd_names = this._getAvailableCommandNames(scmd);
+            const parse_info = this._parameterReader.parse(data, options);
+            const ret = [];
+            const [sel_cmd_index, sel_token_index] =
+                this.getSelectedParameterIndex(parse_info, caret_pos);
+            const cmd_token = parse_info.inputTokens[sel_cmd_index];
+            const cur_token = parse_info.inputTokens[sel_token_index];
+            if (!cur_token || !cmd_token) {
+                // Command name
+                const cmd_names = this._getAvailableCommandNames(
+                    cmd_token?.value || data
+                );
                 for (const cmd_name of cmd_names) {
-                    options.push({
+                    ret.push({
                         name: cmd_name,
                         string: cmd_name,
                         is_command: true,
                     });
                 }
-            } else if (Object.hasOwn(this._registeredCmds, scmd.cmd)) {
-                const param = scmd.params[sel_param_index];
-                if ((param && param[0] === "-") || sel_param_index === 0) {
-                    // Its a argument
-                    const arg_infos = this._getAvailableArguments(scmd, param);
-                    for (const arg_info of arg_infos) {
-                        options.push({
-                            name: `-${arg_info.names.short}, --${arg_info.names.long}`,
-                            string: `--${arg_info.names.long}`,
-                            is_argument: true,
-                            is_required: arg_info.is_required,
-                        });
-                    }
-                } else {
-                    // Its a parameter
+                callback(ret);
+                return;
+            }
+
+            const command_info = this._registeredCmds[cmd_token.value];
+            if (!command_info) {
+                callback([]);
+                return;
+            }
+            if (cur_token.type === ParameterReaderTypes.LEXER.ArgumentShort || cur_token.type === ParameterReaderTypes.LEXER.ArgumentLong) {
+                // Argument
+                const arg_infos = this._getAvailableArguments(
+                    command_info,
+                    cur_token.value
+                );
+                for (const arg_info of arg_infos) {
+                    ret.push({
+                        name: `-${arg_info.names.short}, --${arg_info.names.long}`,
+                        string: `--${arg_info.names.long}`,
+                        is_argument: true,
+                        is_required: arg_info.is_required,
+                    });
+                }
+            } else if (cur_token.type === ParameterReaderTypes.LEXER.Value) {
+                const prev_token = parse_info.inputTokens[sel_token_index - 1];
+                if (prev_token && prev_token.type === ParameterReaderTypes.LEXER.Argument) {
+                    // Parameter
                     const param_infos = this._getAvailableParameters(
-                        scmd,
-                        sel_param_index,
-                        param
+                        command_info,
+                        prev_token.value,
+                        cur_token.value
                     );
                     for (const param_info of param_infos) {
-                        options.push({
+                        ret.push({
                             name: param_info.value,
                             string: param_info.value,
                             is_paramater: true,
@@ -159,7 +170,7 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
                 }
             }
 
-            return options;
+            callback(ret);
         },
     });
 

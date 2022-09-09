@@ -169,15 +169,14 @@ For example:
 #### + Runners (subcommands)
 
 You can execute "subcommands" to use the result in a new command call. The
-syntax of runners looks like `=={command}`, `=={command}.key` or
-`=={command}[index]`.
+syntax of runners looks like `=={command}`.
 
-For example: `read -m res.users -i =={search -m res.users -f id}.id`
+For example: `read -m res.users -i =={search -m res.users -f id}[0]['id']` or `read -m res.users -i =={search -m res.users -f id}['id']`
 
 #### + Massive operations
 
 Massive operations are possible using the command `repeat`. Print to screen is a
-expensive task, consider use the `--slient` argument to increase the
+expensive task, consider use the `--silent` argument to increase the
 performance.
 
 Example:

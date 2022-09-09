@@ -7,15 +7,76 @@ odoo.define("terminal.core.ParameterReader", function (require) {
     const ParameterGenerator = require("terminal.core.ParameterGenerator");
     const Utils = require("terminal.core.Utils");
     const Class = require("web.Class");
-    const core = require("web.core");
 
-    const _t = core._t;
+    const TYPES = {
+        LEXER: {
+            Delimiter: 1,
+            BinAdd: 2,
+            Name: 3,
+            ArgumentShort: 4,
+            ArgumentLong: 5,
+            Value: 6,
+            Assignment: 7,
+            DataAttribute: 8,
+            Runner: 9,
+            Array: 10,
+            String: 11,
+            Number: 12,
+            Dictionary: 14,
+            DictionarySimple: 15,
+        },
+        PARSER: {
+            LOAD_NAME: 1,
+            LOAD_ARG: 2,
+            LOAD_CONST: 3,
+            LOAD_RUNNER: 4,
+            STORE_NAME: 5,
+            CONCAT: 6,
+            CALL_FUNCTION: 7,
+            RETURN_VALUE: 8,
+            LOAD_DATA_ATTR: 9,
+        },
+    };
+
+    const SYMBOLS = {
+        OPER: {
+            ADD: '+',
+            SUBTRACT: '-',
+            MULTIPLY: '*',
+            DIVIDE: '/',
+            ASSIGNMENT: '=',
+        },
+        MAIN: {
+            ARGUMENT: '-',
+        },
+        DATA: {
+            ARRAY_START: '[',
+            ARRAY_END: ']',
+            DICTIONARY_START: '{',
+            DICTIONARY_END: '}',
+            RUNNER_START: '(',
+            RUNNER_END: ')',
+            STRING: '"',
+            STRING_SIMPLE: "'",
+            VARIABLE: '$',
+        }
+    };
 
     /**
      * This class is used to parse terminal command parameters.
+     * Parsing do the following steps:
+     *  - Resolve Generators
+     *  - Resolve Runners
+     *  - Tokenize
+     *  - Lexer
+     *  - Parser
      */
     const ParameterReader = Class.extend({
-        init: function () {
+        DELIMITERS: [";", "\n"],
+
+        init: function (registeredCmds, storageLocal) {
+            this._registeredCmds = registeredCmds;
+            this._storageLocal = storageLocal;
             this._validators = {
                 s: this._validateString.bind(this),
                 i: this._validateInt.bind(this),
@@ -31,16 +92,13 @@ odoo.define("terminal.core.ParameterReader", function (require) {
                 a: this._formatAlphanumeric.bind(this),
             };
             this._regexSanitize = new RegExp(/(?<!\\)'/g);
-            this._regexParams = new RegExp(
-                /(\\?["'`])(?:(?=(\\?))\2.)*?\1|[^\s]+/g
-            );
-            this._regexArgs = new RegExp(/[l?*]/);
-            this._regexRunner = new RegExp(
-                /[=]=\{(.+?)\}(?:\.(\w+)|\[(\d+)\])?/gm
+            this._regexTokens = new RegExp(
+                /(?:(\\?[\"'])(?:(?=(\\?))\2.)*?\1|[\+;\n=]|\$(?:\(.+\)|\w+)|\[[^\]]+\]+|\{[^\}]+\}+|[\w\-\.]+)\s*/g
             );
             this._regexSimpleJSON = new RegExp(
                 /([^=\s]*)\s?=\s?(\\?["'`])(?:(?=(\\?))\3.)*?\2|([^=\s]*)\s?=\s?([^\s]+)/g
             );
+            this._regexComments = new RegExp(/\/\/.*/gm);
             this._parameterGenerator = new ParameterGenerator();
         },
 
@@ -93,6 +151,7 @@ odoo.define("terminal.core.ParameterReader", function (require) {
                     undefined,
                 is_required: Boolean(Number(is_required)),
                 list_mode: list_mode,
+                raw: arg,
             };
         },
 
@@ -147,60 +206,328 @@ odoo.define("terminal.core.ParameterReader", function (require) {
             return res;
         },
 
-        /**
-         * Used to resolve "runners"
-         *
-         * @param {String} cmd_raw
-         * @returns {Object}
-         */
-        preparse: function (cmd_raw) {
-            const match = this._regexRunner[Symbol.matchAll](cmd_raw);
-            const runners = Array.from(match, (x) => {
-                return {
-                    cmd: x[1],
-                    ext: x[3] || x[2],
-                };
-            });
-            let cc_index = 0;
-            const pp_cmd = cmd_raw.replaceAll(
-                this._regexRunner,
-                () => `=={${cc_index++}}`
-            );
-            return {
-                cmd: pp_cmd,
-                runners: runners,
-            };
+        parseAliases: function (cmd_name, args) {
+            let alias_cmd = this._getAliasCommand(cmd_name);
+            if (alias_cmd) {
+                const params_len = args.length;
+                let index = 0;
+                while (index < params_len) {
+                    const re = new RegExp(
+                        `\\$${Number(index) + 1}(?:\\[[^\\]]+\\])?`,
+                        "g"
+                    );
+                    alias_cmd = alias_cmd.replaceAll(re, args[index][1]);
+                    ++index;
+                }
+                alias_cmd = alias_cmd.replaceAll(
+                    /\$\d+(?:\[([^\]]+)\])?/g,
+                    (_, group) => {
+                        return group || "";
+                    }
+                );
+                return alias_cmd;
+            }
+            return null;
+        },
+
+        getCanonicalCommandName: function (cmd_name, registered_cmds) {
+            if (Object.hasOwn(registered_cmds, cmd_name)) {
+                return cmd_name;
+            }
+
+            const entries = Object.entries(registered_cmds);
+            for (const [cname, cmd_def] of entries) {
+                if (cmd_def.aliases.indexOf(cmd_name) !== -1) {
+                    return cname;
+                }
+            }
+
+            return null;
         },
 
         /**
-         * Sanitize command parameters to use when invoke commands.
-         * @param {String} cmd_raw
-         * @param {Object} cmd_def
+         * Split the input data into usable tokens
+         * @param {String} data
+         * @returns {Array}
+         */
+        tokenize: function (data) {
+            // Remove comments
+            const clean_data = data.replaceAll(this._regexComments, "");
+            const match = this._regexTokens[Symbol.matchAll](clean_data);
+            return Array.from(match, (item) => item[0]);
+        },
+
+        /**
+         * Classify tokens
+         * @param {Array} tokens
+         */
+        lex: function (data, options) {
+            const tokens_info = [];
+            const local_names = [];
+            let offset = 0;
+            const tokens = this.tokenize(data);
+            let prev_token_info = null;
+            tokens.forEach((token, index) => {
+                let token_san = token.trim();
+                let ttype = TYPES.LEXER.String;
+                if (token_san[0] === SYMBOLS.MAIN.Argument) {
+                    if (token_san[1] === SYMBOLS.MAIN.Argument) {
+                        ttype = TYPES.LEXER.ArgumentLong;
+                        token_san = token_san.substr(2);
+                    } else {
+                        ttype = TYPES.LEXER.ArgumentShort;
+                        token_san = token_san.substr(1);
+                    }
+                } else if (this.DELIMITERS.indexOf(token_san) !== -1) {
+                    ttype = TYPES.LEXER.Delimiter;
+                } else if (token_san === SYMBOLS.OPER.BINARY_ADD) {
+                    ttype = TYPES.LEXER.BinAdd;
+                } else if (token_san === SYMBOLS.OPER.ASSIGNMENT) {
+                    local_names.push(prev_token_info.value);
+                    ttype = TYPES.LEXER.Assignment;
+                } else if (token_san[0] === SYMBOLS.DATA.ARRAY_START && token_san.at(-1) === SYMBOLS.DATA.ARRAY_END) {
+                    if (prev_token_info && prev_token_info.raw.at(-1) !== " ") {
+                        ttype = TYPES.LEXER.DataAttribute;
+                        token_san = token_san.substr(1, token_san.length-2);
+                        token_san = token_san.trim();
+                    } else {
+                        ttype = TYPES.LEXER.Array;
+                    }
+                } else if (token_san[0] === SYMBOLS.DATA.DICTIONARY_START && token_san.at(-1) === SYMBOLS.DATA.DICTIONARY_END) {
+                    ttype = TYPES.LEXER.Dictionary;
+                } else if (token_san[0] === SYMBOLS.DATA.VARIABLE && token_san[1] === SYMBOLS.DATA.DICTIONARY_START && token_san.at(-1) === SYMBOLS.DATA.DICTIONARY_END) {
+                    ttype = TYPES.LEXER.Runner;
+                    token_san = token_san.substr(2, token_san.length-3).trim();
+                } else if (token_san[0] === SYMBOLS.DATA.VARIABLE) {
+                    ttype = TYPES.LEXER.Name;
+                    token_san = token_san.substr(1);
+                } else if ((token_san[0] === SYMBOLS.DATA.STRING && token_san.at(-1) === SYMBOLS.DATA.STRING) || (token_san[0] === SYMBOLS.DATA.STRING_SIMPLE && token_san.at(-1) === SYMBOLS.DATA.STRING_SIMPLE)) {
+                    ttype = TYPES.LEXER.String;
+                } else if (!_.isNaN(Number(token_san))) {
+                    ttype = TYPES.LEXER.Number;
+                } else if (index === 0 || token_san in options.registeredNames || this.getCanonicalCommandName(token_san, options.registeredCmds)) {
+                    ttype = TYPES.LEXER.Name;
+                }
+
+                if (ttype === TYPES.LEXER.String) {
+                    token_san = this._trimQuotes(token_san);
+                    if (this._regexSimpleJSON.test(token_san)) {
+                        ttype = TYPES.LEXER.DictionarySimple;
+                    }
+                }
+                prev_token_info = {
+                    value: token_san,
+                    raw: token,
+                    type: ttype,
+                    start: offset,
+                    end: offset + token.length,
+                    index: index,
+                };
+                tokens_info.push(prev_token_info);
+                offset += token.length;
+            });
+            return tokens_info;
+        },
+
+        /**
+         * Create the execution stack
+         * @param {String} data
+         * @param {Boolean} need_reset_stores
          * @returns {Object}
          */
-        parse: function (cmd_raw, cmd_def = {}) {
-            const match = this._regexParams[Symbol.matchAll](cmd_raw);
-            let scmd = Array.from(match, (x) => x[0]);
-            const cmd = scmd[0];
-            scmd = scmd.slice(1);
-            let params = _.map(scmd, (item) => {
-                let nvalue = this._trimQuotes(item);
-                nvalue = cmd_def.sanitized
-                    ? this._sanitizeString(nvalue)
-                    : nvalue;
-                return Utils.unescapeQuotes(nvalue);
-            });
-
-            if (cmd_def.generators) {
-                params = this._parameterGenerator.parse(params);
+        parse: function (data, options) {
+            if (options.needResetStores) {
+                this._parameterGenerator.resetStores();
             }
-            params = this.validateAndFormat(cmd_def.args, params);
-
-            return {
-                cmd: cmd,
-                cmdRaw: cmd_raw,
-                params: params,
+            const parse_info = {
+                inputRawString: data,
+                inputTokens: this.lex(data, options),
+                stack: {
+                    instructions: [],
+                    names: [],
+                    arguments: [],
+                    values: [],
+                    attrs: [],
+                },
             };
+
+            // Create Stack Entries
+            const tokens_len = parse_info.inputTokens.length;
+            let in_oper = false;
+            let in_command = false;
+            let command_token_index = -1;
+            for (let index = 0; index < tokens_len; ++index) {
+                const token = parse_info.inputTokens[index];
+                switch (token.type) {
+                    case TYPES.LEXER.Name:
+                        {
+                            const can_name = this.getCanonicalCommandName(
+                                token.value,
+                                options.registeredCmds
+                            );
+                            if (!in_command) {
+                                in_command = can_name !== null;
+                                if (in_command) {
+                                    command_token_index = index;
+                                }
+                            }
+                            if (in_oper) {
+                                const offset_instr =
+                                    parse_info.stack.instructions.length - 1;
+                                parse_info.stack.instructions.splice(
+                                    offset_instr,
+                                    0,
+                                    [TYPES.PARSER.LOAD_NAME, index]
+                                );
+                            } else {
+                                parse_info.stack.names.push(
+                                    can_name || token.value
+                                );
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.LOAD_NAME,
+                                    index,
+                                ]);
+                            }
+                        }
+                        break;
+                    case TYPES.LEXER.ArgumentLong:
+                    case TYPES.LEXER.ArgumentShort:
+                        {
+                            parse_info.stack.arguments.push(token.value);
+                            parse_info.stack.instructions.push([
+                                TYPES.PARSER.LOAD_ARG,
+                                index,
+                            ]);
+                        }
+                        break;
+                    case TYPES.LEXER.BinAdd:
+                        {
+                            parse_info.stack.instructions.push([
+                                TYPES.PARSER.BINARY_ADD,
+                                null,
+                                index,
+                            ]);
+                            in_oper = true;
+                        }
+                        break;
+                    case TYPES.LEXER.Number:
+                    case TYPES.LEXER.String:
+                        {
+                            parse_info.stack.values.push(token.value);
+                            if (in_oper) {
+                                const offset =
+                                    parse_info.stack.instructions.length - 1;
+                                parse_info.stack.instructions.splice(
+                                    offset,
+                                    0,
+                                    [TYPES.PARSER.LOAD_CONST, index]
+                                );
+                            } else {
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.LOAD_CONST,
+                                    index,
+                                ]);
+                            }
+                        }
+                        break;
+                    case TYPES.LEXER.Delimiter:
+                        {
+                            if (in_command) {
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.CALL_FUNCTION,
+                                    command_token_index,
+                                ]);
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.RETURN_VALUE,
+                                    null,
+                                ]);
+                            }
+                            in_oper = false;
+                            in_command = false;
+                        }
+                        break;
+                    case TYPES.LEXER.Assignment:
+                        {
+                            const last_instr =
+                                parse_info.stack.instructions.at(-1);
+                            if (last_instr) {
+                                last_instr[0] = TYPES.PARSER.STORE_NAME;
+                            } else {
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.STORE_NAME,
+                                    index - 1,
+                                ]);
+                            }
+                            in_oper = true;
+                        }
+                        break;
+                    case TYPES.LEXER.DataAttribute:
+                        {
+                            if (token.value.startsWith("'") || token.value.startsWith('"') || !_.isNaN(Number(token.value))) {
+                                parse_info.stack.values.push(this._trimQuotes(token.value));
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.LOAD_CONST,
+                                    index,
+                                ]);
+                            } else {
+                                parse_info.stack.names.push(token.value);
+                                parse_info.stack.instructions.push([
+                                    TYPES.PARSER.LOAD_NAME,
+                                    index,
+                                ]);
+                            }
+                            parse_info.stack.instructions.push([
+                                TYPES.PARSER.LOAD_DATA_ATTR,
+                                index,
+                            ]);
+                        } break;
+                }
+
+                if (
+                    in_command &&
+                    index === tokens_len - 1 &&
+                    token.type !== TYPES.LEXER.Delimiter
+                ) {
+                    parse_info.stack.instructions.push([
+                        TYPES.PARSER.CALL_FUNCTION,
+                        command_token_index,
+                    ]);
+                    parse_info.stack.instructions.push([
+                        TYPES.PARSER.RETURN_VALUE,
+                        null,
+                    ]);
+                }
+            }
+
+            console.log(parse_info);
+            debugger;
+            return parse_info;
+        },
+
+        isRunner: function (str) {
+            return this._regexRunner[Symbol.match](str) !== null;
+        },
+
+        getRunnerDef: function (str) {
+            const match = this._regexRunner[Symbol.matchAll](str);
+            const runners = Array.from(match, (x) => x[1]);
+            return runners[0];
+        },
+
+        getNameParts: function (name) {
+            const base_parts = name.split(".");
+            const match = this._regexDataAccess[Symbol.matchAll](base_parts[0]);
+            const name_parts = Array.from(match, (x) => [x[1], x[2]])[0];
+            return [name_parts[0], name_parts[1], base_parts.slice(1)];
+        },
+
+        /**
+         * Resolve generators
+         * @param {Array} values
+         * @returns {Array}
+         */
+        evalGenerators: function (values) {
+            return this._parameterGenerator.eval(values);
         },
 
         /**
@@ -209,54 +536,68 @@ odoo.define("terminal.core.ParameterReader", function (require) {
          * @param {Array} params
          * @returns {Boolean}
          */
-        validateAndFormat: function (args, params) {
-            if (_.isEmpty(args)) {
-                return params;
+        validateAndFormatArguments: function (cmd_def, kwargs) {
+            if (_.isEmpty(kwargs)) {
+                return kwargs;
             }
-            const checked_args = [];
-            const checked_args_required = [];
-            let kwargs = {};
 
-            // Create arguments dict
-            for (let i = 0; i < params.length; ++i) {
-                const checked_args_count = checked_args.length;
-                if (checked_args_count >= args.length) {
-                    throw _t(
-                        "Invalid command parameters: More arguments are being passed than the command accepts"
+            // Map full info arguments
+            let args_infos = _.chain(cmd_def.args)
+                .map((x) => this.getArgumentInfo(x))
+                .map((x) => [x.names.long, x])
+                .value();
+            args_infos = Object.fromEntries(args_infos);
+
+            // Normalize Names
+            const in_arg_names = Object.keys(kwargs);
+            let full_kwargs = {};
+            for (const arg_name of in_arg_names) {
+                const arg_info = this.getArgumentInfoByName(
+                    cmd_def.args,
+                    arg_name
+                );
+                if (_.isEmpty(arg_info)) {
+                    throw new Error(
+                        `The argument '${arg_name}' does not exist`
                     );
                 }
-                let param = params[i];
+                full_kwargs[arg_info.names.long] = kwargs[arg_name];
+            }
 
-                // Get argument info
-                // If not named param given the position will be used
-                // against "required arguments".
-                let arg_info = null;
-                if (param[0] === "-") {
-                    const arg_name = param.substr(param[1] === "-" ? 2 : 1);
-                    arg_info = this.getArgumentInfoByName(args, arg_name);
-                    if (_.isEmpty(arg_info)) {
-                        throw _t(
-                            `The argument '${args[checked_args_count]}' does not exist`
-                        );
-                    }
-                    // Handle 'flag' type, so it don't use a value
-                    if (arg_info.type === "f") {
-                        kwargs[arg_info.names.long.replaceAll("-", "_")] = true;
-                        continue;
-                    }
-                    param = params[++i];
-                } else {
-                    arg_info = this.getArgumentInfo(args[checked_args_count]);
-                    if (_.isEmpty(arg_info)) {
-                        throw _t(
-                            `The argument '${args[checked_args_count]}' does not exist`
-                        );
-                    }
-                }
+            // Apply default values
+            let default_values = _.chain(args_infos)
+                .filter((x) => typeof x.default_value !== "undefined")
+                .map((x) => [x.names.long, x.raw.split("::")[4]])
+                .value();
+            default_values = _.isEmpty(default_values)
+                ? {}
+                : Object.fromEntries(default_values);
+            full_kwargs = _.defaults(full_kwargs, default_values);
 
+            // Check required
+            const required_args = _.chain(args_infos)
+                .filter("is_required")
+                .map((x) => x.names.long)
+                .value();
+            const required_not_set = _.difference(
+                required_args,
+                Object.keys(full_kwargs)
+            );
+            if (!_.isEmpty(required_not_set)) {
+                throw new Error(
+                    `Required arguments not set! (${required_not_set.join(
+                        ","
+                    )})`
+                );
+            }
+
+            // Check all
+            const arg_names = Object.keys(full_kwargs);
+            const new_kwargs = {};
+            for (const arg_name of arg_names) {
+                const arg_info = args_infos[arg_name];
                 const arg_long_name = arg_info.names.long;
                 const s_arg_long_name = arg_long_name.replaceAll("-", "_");
-
                 let carg = arg_info.type[0];
                 // Determine argument type (modifiers)
                 if (carg === "l") {
@@ -265,141 +606,40 @@ odoo.define("terminal.core.ParameterReader", function (require) {
 
                 if (carg === "-") {
                     const formatted_param = this._tryAllFormatters(
-                        param,
+                        full_kwargs[arg_name],
                         arg_info.list_mode
                     );
                     if (!_.isNull(formatted_param)) {
-                        kwargs[s_arg_long_name] = formatted_param;
-                        checked_args.push(s_arg_long_name);
-                        if (arg_info.is_required) {
-                            checked_args_required.push(s_arg_long_name);
-                        }
+                        new_kwargs[s_arg_long_name] = formatted_param;
                         continue;
                     }
 
                     // Not found any compatible formatter
                     // fallback to generic string
                     carg = "s";
-                } else if (!this._validators[carg](param, arg_info.list_mode)) {
-                    throw _t(
-                        `Invalid parameter for '${arg_long_name}' argument: '${param}'`
+                } else if (
+                    !this._validators[carg](
+                        full_kwargs[arg_name],
+                        arg_info.list_mode
+                    )
+                ) {
+                    throw new Error(
+                        `Invalid parameter for '${arg_long_name}' argument: '${full_kwargs[arg_name]}'`
                     );
                 }
-                kwargs[s_arg_long_name] = this._formatters[carg](
-                    param,
+                new_kwargs[s_arg_long_name] = this._formatters[carg](
+                    full_kwargs[arg_name],
                     arg_info.list_mode
                 );
-                if (!_.isEmpty(arg_info.strict_values)) {
-                    if (
-                        arg_info.strict_values.indexOf(
-                            kwargs[s_arg_long_name]
-                        ) === -1
-                    ) {
-                        throw _t(
-                            `Invalid parameter for '${arg_long_name}' argument: '${param}' (Only ${arg_info.strict_values.join(
-                                ","
-                            )} is allowed)`
-                        );
-                    }
-                }
-                checked_args.push(s_arg_long_name);
-                if (arg_info.is_required) {
-                    checked_args_required.push(s_arg_long_name);
-                }
             }
 
-            // Check that all is correct
-            this._assertParams(
-                args,
-                params,
-                checked_args,
-                checked_args_required
-            );
-
-            // Apply default values
-            let default_values = _.chain(args)
-                .map((x) => this.getArgumentInfo(x))
-                .filter((x) => typeof x.default_value !== "undefined")
-                .map((x) => [x.names.long, x.default_value])
-                .value();
-            default_values = _.isEmpty(default_values)
-                ? {}
-                : Object.fromEntries(default_values);
-            kwargs = _.extend({}, default_values, kwargs);
-            return kwargs;
+            return new_kwargs;
         },
 
-        /**
-         * Free internal stores
-         */
-        resetStores: function () {
-            this._parameterGenerator.resetStores();
-        },
-
-        /**
-         * Check that the parameters match the expected number.
-         *
-         *
-         * @param {String} args
-         * @param {Array} params
-         * @param {Array} checked_args
-         * @param {Array} checked_args_required
-         */
-        _assertParams: function (
-            args,
-            params,
-            checked_args,
-            checked_args_required
-        ) {
-            const normalized_arg_names = _.chain(args)
-                .map((x) => this.getArgumentInfo(x)?.names.long)
-                .value();
-            const required_args = _.chain(args)
-                .filter((x) => this.getArgumentInfo(x)?.is_required)
-                .map((x) => this.getArgumentInfo(x)?.names.long)
-                .value();
-            const param_values = _.filter(params, (x) => x[0] !== "-");
-            const param_values_count = param_values.length;
-            const checked_args_count = checked_args.length;
-            const checked_required_args_count = checked_args_required.length;
-            if (checked_args_count < param_values_count) {
-                const args_diff = _.difference(
-                    normalized_arg_names,
-                    checked_args
-                );
-                throw _t(
-                    `Invalid command parameters: Lack of parameters (${args_diff.join(
-                        ","
-                    )})`
-                );
-            } else if (checked_args_count > param_values_count) {
-                const args_diff = _.difference(
-                    checked_args,
-                    normalized_arg_names
-                );
-                throw _t(
-                    `Invalid command parameters: Too many parameters (${args_diff.join(
-                        ","
-                    )})`
-                );
-            } else if (checked_required_args_count < required_args.length) {
-                const normalized_arg_names_required = _.chain(args)
-                    .map((x) => {
-                        const args_info = this.getArgumentInfo(x);
-                        return args_info?.is_required && args_info?.names.long;
-                    })
-                    .filter((x) => x)
-                    .value();
-                const args_diff = _.difference(
-                    normalized_arg_names_required,
-                    checked_args_required
-                );
-                throw _t(
-                    `Invalid command parameters: Required arguments missing (${args_diff.join(
-                        ","
-                    )})`
-                );
-            }
+        _getAliasCommand: function (cmd_name) {
+            const aliases =
+                this._storageLocal.getItem("terminal_aliases") || {};
+            return aliases[cmd_name];
         },
 
         _tryAllFormatters: function (param, list_mode) {
@@ -419,16 +659,6 @@ odoo.define("terminal.core.ParameterReader", function (require) {
         },
 
         /**
-         * Get the number of required arguments
-         * @param {String} args
-         * @returns {Int}
-         */
-        _getNumRequiredArgs: function (args) {
-            const match = args.match(this._regexArgs);
-            return match ? match.index : args.length;
-        },
-
-        /**
          * Replace all quotes to double-quotes.
          * @param {String} str
          * @returns {String}
@@ -442,16 +672,17 @@ odoo.define("terminal.core.ParameterReader", function (require) {
          * @returns {String}
          */
         _trimQuotes: function (str) {
-            const first_char = str[0];
-            const last_char = str.at(-1);
+            const str_trim = str.trim();
+            const first_char = str_trim[0];
+            const last_char = str_trim.at(-1);
             if (
                 (first_char === '"' && last_char === '"') ||
                 (first_char === "'" && last_char === "'") ||
                 (first_char === "`" && last_char === "`")
             ) {
-                return str.substring(1, str.length - 1);
+                return str_trim.substring(1, str_trim.length - 1).trim();
             }
-            return str;
+            return str_trim;
         },
 
         /**
@@ -469,7 +700,8 @@ odoo.define("terminal.core.ParameterReader", function (require) {
             let params = {};
             // Check if is a valid simple format string
             try {
-                return JSON.parse(str);
+                const sa_str = this._sanitizeString(str);
+                return JSON.parse(sa_str);
             } catch (err) {
                 params = str.match(this._regexSimpleJSON);
                 if (str[0] === "[" || str[0] === "{" || _.isEmpty(params)) {
@@ -561,23 +793,7 @@ odoo.define("terminal.core.ParameterReader", function (require) {
          */
         _validateJson: function (param, list_mode = false) {
             if (list_mode) {
-                const param_split = param.split(",");
-                let is_valid = true;
-                const param_split_len = param_split.length;
-                let index = 0;
-                while (index < param_split_len) {
-                    const ps = param_split[index];
-                    const param_sa = ps.trim();
-
-                    try {
-                        this._simple2JSON(param_sa);
-                    } catch (err) {
-                        is_valid = false;
-                        break;
-                    }
-                    ++index;
-                }
-                return is_valid;
+                return false;
             }
 
             try {
@@ -655,5 +871,8 @@ odoo.define("terminal.core.ParameterReader", function (require) {
         },
     });
 
-    return ParameterReader;
+    return {
+        ParameterReader: ParameterReader,
+        TYPES: TYPES,
+    };
 });

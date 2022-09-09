@@ -33,7 +33,7 @@ odoo.define("terminal.functions.Core", function (require) {
                 definition: "Print a message",
                 callback: this._cmdPrintText,
                 detail: "Eval parameters and print the result.",
-                args: ["s::m:msg::1::The message to print"],
+                args: ["a::m:msg::1::The message to print"],
                 aliases: ["echo"],
                 example: "-m 'This is a example'",
             });
@@ -240,18 +240,6 @@ odoo.define("terminal.functions.Core", function (require) {
                     this._registeredCmds[kwargs.cmd]
                 );
             } else {
-                const [ncmd, cmd_def] = this._searchCommandDefByAlias(
-                    kwargs.cmd
-                );
-                if (cmd_def) {
-                    this.screen.print(
-                        this._templates.render("DEPRECATED_COMMAND", {
-                            cmd: ncmd,
-                        })
-                    );
-                    this._printHelpDetailed(ncmd, this._registeredCmds[ncmd]);
-                }
-
                 return Promise.reject(`'${kwargs.cmd}' command doesn't exists`);
             }
             return Promise.resolve();
@@ -354,7 +342,7 @@ odoo.define("terminal.functions.Core", function (require) {
                     if (!cmd_name) {
                         return reject("Need a valid command to execute!");
                     }
-                    window[varname] = await this.executeCommand(
+                    window[varname] = await this.execute(
                         kwargs.cmd,
                         false,
                         true
@@ -378,11 +366,7 @@ odoo.define("terminal.functions.Core", function (require) {
                         return reject("Need a valid command to execute!");
                     }
                     const filename = `${cmd_name}_${new Date().getTime()}.json`;
-                    const result = await this.executeCommand(
-                        kwargs.cmd,
-                        false,
-                        true
-                    );
+                    const result = await this.execute(kwargs.cmd, false, true);
                     Utils.save2File(
                         filename,
                         "text/json",
@@ -402,14 +386,8 @@ odoo.define("terminal.functions.Core", function (require) {
             return new Promise(async (resolve, reject) => {
                 let time_elapsed_secs = -1;
                 try {
-                    const [cmd, cmd_name] = this.validateCommand(kwargs.cmd);
-                    if (!cmd_name) {
-                        return reject("Need a valid command to execute!");
-                    }
-                    const cmd_def = this._registeredCmds[cmd_name];
-                    const scmd = this._parameterReader.parse(cmd, cmd_def);
                     const start_time = new Date();
-                    await this._processCommandJob(scmd, cmd_def);
+                    await this.execute(kwargs.cmd, false);
                     time_elapsed_secs = (new Date() - start_time) / 1000.0;
                     this.screen.print(
                         `Time elapsed: '${time_elapsed_secs}' seconds`
@@ -426,25 +404,19 @@ odoo.define("terminal.functions.Core", function (require) {
                 if (kwargs.times < 0) {
                     return reject("'Times' parameter must be positive");
                 }
-                const [cmd, cmd_name] = this.validateCommand(kwargs.cmd);
-                if (!cmd_name) {
-                    return reject("Need a valid command to execute!");
-                }
-                const cmd_def = this._registeredCmds[cmd_name];
                 const res = [];
                 const do_repeat = (rtimes) => {
                     if (!rtimes) {
                         this.screen.print(
-                            `<i>** Repeat finsihed: '${cmd_name}' command called ${kwargs.times} times</i>`
+                            `<i>** Repeat finsihed: '${kwargs.cmd}' called ${kwargs.times} times</i>`
                         );
                         return resolve(res);
                     }
-                    const scmd = this._parameterReader.parse(cmd, cmd_def);
-                    this._processCommandJob(scmd, cmd_def, kwargs.silent)
+                    return this.execute(kwargs.cmd, false, kwargs.silent)
                         .then((result) => res.push(result))
                         .finally(() => do_repeat(rtimes - 1));
                 };
-                do_repeat(kwargs.times);
+                return do_repeat(kwargs.times);
             });
         },
 
@@ -454,8 +426,8 @@ odoo.define("terminal.functions.Core", function (require) {
                 _.map(
                     jobs,
                     (item) =>
-                        `${item.scmd.cmd} <small><i>${
-                            item.scmd.cmdRaw
+                        `${item.cmdInfo.cmdName} <small><i>${
+                            item.cmdInfo.cmdRaw
                         }</i></small> ${
                             item.healthy
                                 ? ""
