@@ -37,12 +37,8 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
             return arg_infos;
         },
 
-        _getAvailableParameters: function (
-            command_info,
-            arg_name,
-            arg_value,
-        ) {
-            let arg_info = this._parameterReader.getArgumentInfoByName(
+        _getAvailableParameters: function (command_info, arg_name, arg_value) {
+            const arg_info = this._parameterReader.getArgumentInfoByName(
                 command_info.args,
                 arg_name
             );
@@ -52,7 +48,10 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
                 if (!_.isEmpty(arg_info.strict_values)) {
                     const def_value = arg_info.default_value;
                     for (const strict_value of arg_info.strict_values) {
-                        if (!arg_value || String(strict_value).startsWith(arg_value)) {
+                        if (
+                            !arg_value ||
+                            String(strict_value).startsWith(arg_value)
+                        ) {
                             res_param_infos.push({
                                 value: strict_value,
                                 is_required: arg_info.is_required,
@@ -90,11 +89,14 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
             }
             if (sel_token_index !== -1) {
                 let found = false;
-                for (let [type, tindex] of parse_info.stack.instructions) {
+                for (const [type, tindex] of parse_info.stack.instructions) {
                     if (tindex === sel_token_index) {
                         found = true;
                     }
-                    if (found && type === ParameterReaderTypes.PARSER.CALL_FUNCTION) {
+                    if (
+                        found &&
+                        type === ParameterReaderTypes.PARSER.CALL_FUNCTION
+                    ) {
                         sel_cmd_index = tindex;
                         break;
                     }
@@ -135,7 +137,10 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
                 callback([]);
                 return;
             }
-            if (cur_token.type === ParameterReaderTypes.LEXER.ArgumentShort || cur_token.type === ParameterReaderTypes.LEXER.ArgumentLong) {
+            if (
+                cur_token.type === ParameterReaderTypes.LEXER.ArgumentShort ||
+                cur_token.type === ParameterReaderTypes.LEXER.ArgumentLong
+            ) {
                 // Argument
                 const arg_infos = this._getAvailableArguments(
                     command_info,
@@ -151,7 +156,10 @@ odoo.define("terminal.core.CommandAssistant", function (require) {
                 }
             } else if (cur_token.type === ParameterReaderTypes.LEXER.Value) {
                 const prev_token = parse_info.inputTokens[sel_token_index - 1];
-                if (prev_token && prev_token.type === ParameterReaderTypes.LEXER.Argument) {
+                if (
+                    prev_token &&
+                    prev_token.type === ParameterReaderTypes.LEXER.Argument
+                ) {
                     // Parameter
                     const param_infos = this._getAvailableParameters(
                         command_info,

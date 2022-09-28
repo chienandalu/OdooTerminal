@@ -40,26 +40,26 @@ odoo.define("terminal.core.ParameterReader", function (require) {
 
     const SYMBOLS = {
         OPER: {
-            ADD: '+',
-            SUBTRACT: '-',
-            MULTIPLY: '*',
-            DIVIDE: '/',
-            ASSIGNMENT: '=',
+            ADD: "+",
+            SUBTRACT: "-",
+            MULTIPLY: "*",
+            DIVIDE: "/",
+            ASSIGNMENT: "=",
         },
         MAIN: {
-            ARGUMENT: '-',
+            ARGUMENT: "-",
         },
         DATA: {
-            ARRAY_START: '[',
-            ARRAY_END: ']',
-            DICTIONARY_START: '{',
-            DICTIONARY_END: '}',
-            RUNNER_START: '(',
-            RUNNER_END: ')',
+            ARRAY_START: "[",
+            ARRAY_END: "]",
+            DICTIONARY_START: "{",
+            DICTIONARY_END: "}",
+            RUNNER_START: "(",
+            RUNNER_END: ")",
             STRING: '"',
             STRING_SIMPLE: "'",
-            VARIABLE: '$',
-        }
+            VARIABLE: "$",
+        },
     };
 
     /**
@@ -285,27 +285,51 @@ odoo.define("terminal.core.ParameterReader", function (require) {
                 } else if (token_san === SYMBOLS.OPER.ASSIGNMENT) {
                     local_names.push(prev_token_info.value);
                     ttype = TYPES.LEXER.Assignment;
-                } else if (token_san[0] === SYMBOLS.DATA.ARRAY_START && token_san.at(-1) === SYMBOLS.DATA.ARRAY_END) {
+                } else if (
+                    token_san[0] === SYMBOLS.DATA.ARRAY_START &&
+                    token_san.at(-1) === SYMBOLS.DATA.ARRAY_END
+                ) {
                     if (prev_token_info && prev_token_info.raw.at(-1) !== " ") {
                         ttype = TYPES.LEXER.DataAttribute;
-                        token_san = token_san.substr(1, token_san.length-2);
+                        token_san = token_san.substr(1, token_san.length - 2);
                         token_san = token_san.trim();
                     } else {
                         ttype = TYPES.LEXER.Array;
                     }
-                } else if (token_san[0] === SYMBOLS.DATA.DICTIONARY_START && token_san.at(-1) === SYMBOLS.DATA.DICTIONARY_END) {
+                } else if (
+                    token_san[0] === SYMBOLS.DATA.DICTIONARY_START &&
+                    token_san.at(-1) === SYMBOLS.DATA.DICTIONARY_END
+                ) {
                     ttype = TYPES.LEXER.Dictionary;
-                } else if (token_san[0] === SYMBOLS.DATA.VARIABLE && token_san[1] === SYMBOLS.DATA.DICTIONARY_START && token_san.at(-1) === SYMBOLS.DATA.DICTIONARY_END) {
+                } else if (
+                    token_san[0] === SYMBOLS.DATA.VARIABLE &&
+                    token_san[1] === SYMBOLS.DATA.DICTIONARY_START &&
+                    token_san.at(-1) === SYMBOLS.DATA.DICTIONARY_END
+                ) {
                     ttype = TYPES.LEXER.Runner;
-                    token_san = token_san.substr(2, token_san.length-3).trim();
+                    token_san = token_san
+                        .substr(2, token_san.length - 3)
+                        .trim();
                 } else if (token_san[0] === SYMBOLS.DATA.VARIABLE) {
                     ttype = TYPES.LEXER.Name;
                     token_san = token_san.substr(1);
-                } else if ((token_san[0] === SYMBOLS.DATA.STRING && token_san.at(-1) === SYMBOLS.DATA.STRING) || (token_san[0] === SYMBOLS.DATA.STRING_SIMPLE && token_san.at(-1) === SYMBOLS.DATA.STRING_SIMPLE)) {
+                } else if (
+                    (token_san[0] === SYMBOLS.DATA.STRING &&
+                        token_san.at(-1) === SYMBOLS.DATA.STRING) ||
+                    (token_san[0] === SYMBOLS.DATA.STRING_SIMPLE &&
+                        token_san.at(-1) === SYMBOLS.DATA.STRING_SIMPLE)
+                ) {
                     ttype = TYPES.LEXER.String;
                 } else if (!_.isNaN(Number(token_san))) {
                     ttype = TYPES.LEXER.Number;
-                } else if (index === 0 || token_san in options.registeredNames || this.getCanonicalCommandName(token_san, options.registeredCmds)) {
+                } else if (
+                    index === 0 ||
+                    token_san in options.registeredNames ||
+                    this.getCanonicalCommandName(
+                        token_san,
+                        options.registeredCmds
+                    )
+                ) {
                     ttype = TYPES.LEXER.Name;
                 }
 
@@ -463,8 +487,14 @@ odoo.define("terminal.core.ParameterReader", function (require) {
                         break;
                     case TYPES.LEXER.DataAttribute:
                         {
-                            if (token.value.startsWith("'") || token.value.startsWith('"') || !_.isNaN(Number(token.value))) {
-                                parse_info.stack.values.push(this._trimQuotes(token.value));
+                            if (
+                                token.value.startsWith("'") ||
+                                token.value.startsWith('"') ||
+                                !_.isNaN(Number(token.value))
+                            ) {
+                                parse_info.stack.values.push(
+                                    this._trimQuotes(token.value)
+                                );
                                 parse_info.stack.instructions.push([
                                     TYPES.PARSER.LOAD_CONST,
                                     index,
@@ -480,7 +510,8 @@ odoo.define("terminal.core.ParameterReader", function (require) {
                                 TYPES.PARSER.LOAD_DATA_ATTR,
                                 index,
                             ]);
-                        } break;
+                        }
+                        break;
                 }
 
                 if (

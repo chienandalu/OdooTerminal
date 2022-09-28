@@ -171,7 +171,8 @@ For example:
 You can execute "subcommands" to use the result in a new command call. The
 syntax of runners looks like `=={command}`.
 
-For example: `read -m res.users -i =={search -m res.users -f id}[0]['id']` or `read -m res.users -i =={search -m res.users -f id}['id']`
+For example: `read -m res.users -i =={search -m res.users -f id}[0]['id']` or
+`read -m res.users -i =={search -m res.users -f id}['id']`
 
 #### + Massive operations
 

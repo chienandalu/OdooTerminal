@@ -349,17 +349,29 @@ odoo.define("terminal.Terminal", function (require) {
                                         last_frame.store[cmd_name]
                                     );
                                     break;
-                                } else if (Object.hasOwn(root_frame.store, cmd_name)) {
+                                } else if (
+                                    Object.hasOwn(root_frame.store, cmd_name)
+                                ) {
                                     frame.values.push(
                                         root_frame.store[cmd_name]
                                     );
                                     break;
-                                } else if (Object.hasOwn(this._registeredNames, cmd_name)) {
+                                } else if (
+                                    Object.hasOwn(
+                                        this._registeredNames,
+                                        cmd_name
+                                    )
+                                ) {
                                     frame.values.push(
                                         this._registeredNames[cmd_name]
                                     );
                                     break;
-                                } else if (Object.hasOwn(this._registeredCmds, cmd_name)) {
+                                } else if (
+                                    Object.hasOwn(
+                                        this._registeredCmds,
+                                        cmd_name
+                                    )
+                                ) {
                                     last_frame = {
                                         cmd: cmd_name,
                                         store: {},
@@ -388,11 +400,11 @@ odoo.define("terminal.Terminal", function (require) {
                                                     }
                                                 )
                                             );
-                                        } else {
+                                        }
                                             return reject(
                                                 `Unknown name '${cmd_name}' at ${token.start}:${token.end}`
                                             );
-                                        }
+
                                     }
                                     // Jump to next frame
                                     // const inst_index = this._getNextStackInstructionIndex(this.instructions, ParameterReader.TYPES.PARSER.CALL_FUNCTION, index+1);
@@ -419,7 +431,7 @@ odoo.define("terminal.Terminal", function (require) {
                                     await this._evalRunner(value)
                                 );
                             }
-                            break;    
+                            break;
                         case ParameterReader.TYPES.PARSER.LOAD_ARG:
                             {
                                 const arg = stack.arguments.shift();
@@ -522,10 +534,15 @@ odoo.define("terminal.Terminal", function (require) {
                                 const attr_name = frame.values.pop();
                                 const index_value = frame.values.length - 1;
                                 let value = frame.values[index_value];
-                                if (typeof value === 'undefined') {
-                                    return reject(`Cannot read properties of undefined (reading '${attr_name}')`);
-                                } else if (_.isNaN(Number(attr_name)) && value instanceof Array) {
-                                    value = _.pluck(value, attr_name).join(',');
+                                if (typeof value === "undefined") {
+                                    return reject(
+                                        `Cannot read properties of undefined (reading '${attr_name}')`
+                                    );
+                                } else if (
+                                    _.isNaN(Number(attr_name)) &&
+                                    value instanceof Array
+                                ) {
+                                    value = _.pluck(value, attr_name).join(",");
                                 } else {
                                     value = value[attr_name];
                                 }
